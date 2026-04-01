@@ -1,4 +1,5 @@
 use godot::prelude::*;
+use prost_reflect::{DynamicMessage, MapKey, ReflectMessage, Value as ProstValue};
 
 use netcore::event::{NetEvent, RoleInfo};
 use netcore::session::ConnectionState;
@@ -41,6 +42,12 @@ impl NetClientBridge {
             .set_reconnect(enabled, interval_secs, max_retries as u32);
     }
 
+    /// Load protocol.desc + protocol_meta.json from a directory for the generic decode channel.
+    #[func]
+    fn load_protocol_registry(&mut self, dir: GString) {
+        self.client.load_protocol_registry(&dir.to_string());
+    }
+
     #[func]
     fn send_login(&mut self, account: GString, token: GString) {
         self.client
@@ -70,6 +77,15 @@ impl NetClientBridge {
     #[func]
     fn send_move(&mut self, x: i64, y: i64, z: i64) {
         self.client.send_move(x, y, z);
+    }
+
+    /// Generic send: encode `fields` Dictionary using the protocol descriptor and send as key.
+    #[func]
+    fn send_generic(&mut self, key: i64, fields: Dictionary) {
+        let json_val = dict_to_json_value(&fields);
+        if let Err(e) = self.client.send_generic(key as u16, &json_val) {
+            log::warn!("[net_bridge] send_generic key={}: {}", key, e);
+        }
     }
 
     #[func]
@@ -103,6 +119,8 @@ impl NetClientBridge {
         arr
     }
 }
+
+// ── Event → Dictionary (Rust → GDScript bridge) ──
 
 fn event_to_dict(event: &NetEvent) -> Dictionary {
     let mut d = Dictionary::new();
@@ -193,15 +211,145 @@ fn event_to_dict(event: &NetEvent) -> Dictionary {
         NetEvent::EnterZoneNotify => {
             d.set("type", "dsp_enter_zone");
         }
+        // Generic channel: auto-flatten DynamicMessage fields into the dict.
+        // type = event_name (e.g. "rsp_shop_list"), all proto fields are top-level keys.
+        NetEvent::GenericMessage {
+            event_name,
+            key: _,
+            err,
+            fields,
+        } => {
+            d.set("type", GString::from(event_name.as_str()));
+            d.set("err", *err as i64);
+            for field_desc in fields.descriptor().fields() {
+                let value = fields.get_field(&field_desc);
+                d.set(field_desc.name(), prost_value_to_variant(&*value));
+            }
+        }
+        // Raw fallback: pass actual body bytes as PackedByteArray.
         NetEvent::RawMessage { key, err, body } => {
             d.set("type", "raw");
             d.set("key", *key as i64);
             d.set("err", *err as i64);
-            d.set("body_len", body.len() as i64);
+            let mut byte_arr = PackedByteArray::new();
+            for b in body {
+                byte_arr.push(*b);
+            }
+            d.set("body", byte_arr);
         }
     }
     d
 }
+
+// ── DynamicMessage → Godot Variant helpers ──
+
+fn prost_value_to_variant(value: &ProstValue) -> Variant {
+    match value {
+        ProstValue::Bool(b) => b.to_variant(),
+        ProstValue::I32(v) => (*v as i64).to_variant(),
+        ProstValue::I64(v) => v.to_variant(),
+        ProstValue::U32(v) => (*v as i64).to_variant(),
+        ProstValue::U64(v) => (*v as i64).to_variant(),
+        ProstValue::F32(v) => (*v as f64).to_variant(),
+        ProstValue::F64(v) => v.to_variant(),
+        ProstValue::String(s) => GString::from(s.as_str()).to_variant(),
+        ProstValue::Bytes(b) => {
+            let mut arr = PackedByteArray::new();
+            for byte in b.iter() {
+                arr.push(*byte);
+            }
+            arr.to_variant()
+        }
+        ProstValue::EnumNumber(n) => (*n as i64).to_variant(),
+        ProstValue::Message(sub_msg) => dynamic_msg_to_dict(sub_msg).to_variant(),
+        ProstValue::List(items) => {
+            let mut arr: Array<Variant> = Array::new();
+            for item in items {
+                let v = prost_value_to_variant(item);
+                arr.push(&v);
+            }
+            arr.to_variant()
+        }
+        ProstValue::Map(map) => {
+            let mut sub_dict = Dictionary::new();
+            for (k, v) in map {
+                let key_var: Variant = match k {
+                    MapKey::Bool(b) => b.to_variant(),
+                    MapKey::I32(n) => (*n as i64).to_variant(),
+                    MapKey::I64(n) => n.to_variant(),
+                    MapKey::U32(n) => (*n as i64).to_variant(),
+                    MapKey::U64(n) => (*n as i64).to_variant(),
+                    MapKey::String(s) => GString::from(s.as_str()).to_variant(),
+                };
+                sub_dict.set(key_var, prost_value_to_variant(v));
+            }
+            sub_dict.to_variant()
+        }
+    }
+}
+
+fn dynamic_msg_to_dict(msg: &DynamicMessage) -> Dictionary {
+    let mut d = Dictionary::new();
+    for field_desc in msg.descriptor().fields() {
+        let value = msg.get_field(&field_desc);
+        d.set(field_desc.name(), prost_value_to_variant(&*value));
+    }
+    d
+}
+
+// ── Godot Dictionary → serde_json::Value helpers (used by send_generic) ──
+
+fn dict_to_json_value(d: &Dictionary) -> serde_json::Value {
+    let mut map = serde_json::Map::new();
+    for (key_var, val_var) in d.iter_shared() {
+        if let Ok(key_str) = key_var.try_to::<GString>() {
+            map.insert(key_str.to_string(), variant_to_json_value(&val_var));
+        }
+    }
+    serde_json::Value::Object(map)
+}
+
+fn variant_to_json_value(v: &Variant) -> serde_json::Value {
+    use godot::builtin::VariantType;
+    match v.get_type() {
+        VariantType::NIL => serde_json::Value::Null,
+        VariantType::BOOL => match v.try_to::<bool>() {
+            Ok(b) => serde_json::Value::Bool(b),
+            Err(_) => serde_json::Value::Null,
+        },
+        VariantType::INT => match v.try_to::<i64>() {
+            Ok(i) => serde_json::json!(i),
+            Err(_) => serde_json::Value::Null,
+        },
+        VariantType::FLOAT => match v.try_to::<f64>() {
+            Ok(f) => serde_json::Number::from_f64(f)
+                .map(serde_json::Value::Number)
+                .unwrap_or(serde_json::Value::Null),
+            Err(_) => serde_json::Value::Null,
+        },
+        VariantType::STRING => match v.try_to::<GString>() {
+            Ok(s) => serde_json::Value::String(s.to_string()),
+            Err(_) => serde_json::Value::Null,
+        },
+        VariantType::DICTIONARY => match v.try_to::<Dictionary>() {
+            Ok(d) => dict_to_json_value(&d),
+            Err(_) => serde_json::Value::Null,
+        },
+        VariantType::ARRAY => match v.try_to::<Array<Variant>>() {
+            Ok(arr) => {
+                let json_arr: Vec<serde_json::Value> = arr
+                    .iter_shared()
+                    .map(|item| variant_to_json_value(&item))
+                    .collect();
+                serde_json::Value::Array(json_arr)
+            }
+            Err(_) => serde_json::Value::Null,
+        },
+        _ => serde_json::Value::Null,
+    }
+}
+
+// ── Compiled channel helpers ──
 
 fn roles_to_array(roles: &[RoleInfo]) -> Array<Dictionary> {
     let mut arr = Array::new();

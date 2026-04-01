@@ -7,12 +7,14 @@ use crate::codec::PacketCodec;
 use crate::dispatcher;
 use crate::event::NetEvent;
 use crate::pb;
+use crate::protocol_registry::ProtocolRegistry;
 use crate::session::{ConnectionState, Session};
 use crate::transport::{RawNetEvent, WsTransport};
 
 pub struct NetClient {
     transport: Option<WsTransport>,
     session: Session,
+    registry: ProtocolRegistry,
     pending_packets: Vec<Vec<u8>>,
     heartbeat_active: bool,
     heartbeat_interval: Duration,
@@ -32,6 +34,7 @@ impl NetClient {
         Self {
             transport: None,
             session: Session::new(),
+            registry: ProtocolRegistry::new(),
             pending_packets: Vec::new(),
             heartbeat_active: false,
             heartbeat_interval: Duration::from_secs(5),
@@ -44,6 +47,24 @@ impl NetClient {
             reconnect_attempt: 0,
             last_disconnect: None,
         }
+    }
+
+    /// Load protocol.desc + protocol_meta.json from a directory for the generic channel.
+    pub fn load_protocol_registry(&mut self, dir: &str) {
+        match self.registry.load_from_dir(dir) {
+            Ok(()) => info!("[net] protocol registry loaded from {}", dir),
+            Err(e) => warn!("[net] protocol registry load failed: {}", e),
+        }
+    }
+
+    /// Send a message via the generic channel, encoding from a JSON value using the registry.
+    pub fn send_generic(&mut self, key: u16, json: &serde_json::Value) -> Result<(), String> {
+        let meta = self.registry.get(key)
+            .ok_or_else(|| format!("no meta entry for key {}", key))?
+            .clone();
+        let body = self.registry.encode_from_json_value(&meta.message, json)?;
+        self.send_packet(key, &body);
+        Ok(())
     }
 
     pub fn connect(&mut self, host: &str, port: u16, path: &str) {
@@ -208,7 +229,7 @@ impl NetClient {
                     events.push(NetEvent::ConnectError { message });
                 }
                 RawNetEvent::Message(data) => {
-                    let event = dispatcher::dispatch(&data);
+                    let event = dispatcher::dispatch(&data, &mut self.registry);
                     self.update_session_from_event(&event);
                     events.push(event);
                 }
@@ -222,12 +243,17 @@ impl NetClient {
 
     fn send_message(&mut self, msg: &ClientMessage) {
         let (key, body) = cmd_ext::encode_client_message(msg);
-        let packet = PacketCodec::encode(key.as_u16(), &body);
+        self.send_packet(key.as_u16(), &body);
+    }
+
+    /// Low-level send: encode into a wire packet and queue or send immediately.
+    fn send_packet(&mut self, key: u16, body: &[u8]) {
+        let packet = PacketCodec::encode(key, body);
 
         if self.session.state == ConnectionState::Disconnected
             || self.session.state == ConnectionState::Connecting
         {
-            debug!("[net] queued packet key={:?} ({} bytes)", key, packet.len());
+            debug!("[net] queued packet key={} ({} bytes)", key, packet.len());
             self.pending_packets.push(packet);
             return;
         }

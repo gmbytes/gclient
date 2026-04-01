@@ -1,8 +1,10 @@
 use crate::cmd_ext::{self, EKey, ServerMessage};
 use crate::codec::PacketCodec;
 use crate::event::{NetEvent, RoleInfo};
+use crate::protocol_registry::ProtocolRegistry;
 
-pub fn dispatch(raw: &[u8]) -> NetEvent {
+/// Dual-channel dispatch: compiled channel first, generic fallback second.
+pub fn dispatch(raw: &[u8], registry: &mut ProtocolRegistry) -> NetEvent {
     let (key_u16, err_u16, body) = match PacketCodec::decode(raw) {
         Ok(v) => v,
         Err(e) => {
@@ -14,28 +16,44 @@ pub fn dispatch(raw: &[u8]) -> NetEvent {
         }
     };
 
-    let key = match EKey::from_u16(key_u16) {
-        Some(k) => k,
-        None => {
+    // --- Compiled channel: try strong-typed decode first ---
+    if let Some(key) = EKey::from_u16(key_u16) {
+        if err_u16 != 0 {
+            return convert_error_response(key, err_u16);
+        }
+        if let Ok(msg) = cmd_ext::decode_server_message(key, body) {
+            return convert_server_message(msg);
+        }
+    }
+
+    // --- Generic channel: fall back to prost-reflect dynamic decode ---
+    if let Some(meta) = registry.get(key_u16).cloned() {
+        if err_u16 != 0 {
             return NetEvent::RawMessage {
                 key: key_u16,
                 err: err_u16,
-                body: body.to_vec(),
+                body: vec![],
             };
         }
-    };
-
-    if err_u16 != 0 {
-        return convert_error_response(key, err_u16);
-    }
-
-    match cmd_ext::decode_server_message(key, body) {
-        Ok(msg) => convert_server_message(msg),
-        Err(_) => NetEvent::RawMessage {
+        match registry.decode_generic(&meta.message, body) {
+            Ok(dynamic_msg) => NetEvent::GenericMessage {
+                event_name: meta.event_name,
+                key: key_u16,
+                err: err_u16,
+                fields: dynamic_msg,
+            },
+            Err(_) => NetEvent::RawMessage {
+                key: key_u16,
+                err: err_u16,
+                body: body.to_vec(),
+            },
+        }
+    } else {
+        NetEvent::RawMessage {
             key: key_u16,
             err: err_u16,
             body: body.to_vec(),
-        },
+        }
     }
 }
 

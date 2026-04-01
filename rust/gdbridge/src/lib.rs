@@ -1,4 +1,5 @@
 mod net_bridge;
+mod config_bridge;
 
 use godot::prelude::*;
 

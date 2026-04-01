@@ -1,3 +1,5 @@
+use prost_reflect::DynamicMessage;
+
 #[derive(Clone, Debug)]
 pub struct RoleInfo {
     pub id: i64,
@@ -57,6 +59,12 @@ pub enum NetEvent {
         z: i64,
     },
     EnterZoneNotify,
+    GenericMessage {
+        event_name: String,
+        key: u16,
+        err: u16,
+        fields: DynamicMessage,
+    },
     RawMessage {
         key: u16,
         err: u16,

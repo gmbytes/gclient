@@ -12,7 +12,6 @@ fn main() {
         .join("..")
         .join("..")
         .join("..")
-        .join("..")
         .join("comm")
         .join("tools")
         .join("genpb")
