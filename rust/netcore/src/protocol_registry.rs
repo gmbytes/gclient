@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::Path;
 
@@ -21,6 +21,8 @@ pub struct ProtocolRegistry {
     meta: HashMap<u16, ProtocolMetaEntry>,
     /// message_name -> MessageDescriptor (cached after first lookup)
     descriptors: HashMap<String, MessageDescriptor>,
+    /// Keys whose runtime descriptor fingerprint differs from the compiled one
+    overrides: HashSet<u16>,
 }
 
 impl ProtocolRegistry {
@@ -29,6 +31,7 @@ impl ProtocolRegistry {
             pool: None,
             meta: HashMap::new(),
             descriptors: HashMap::new(),
+            overrides: HashSet::new(),
         }
     }
 
@@ -69,7 +72,12 @@ impl ProtocolRegistry {
         }
 
         self.warm_descriptors();
-        info!("[protocol_registry] ready, {} descriptors cached", self.descriptors.len());
+        self.compute_overrides();
+        info!(
+            "[protocol_registry] ready, {} descriptors cached, {} overrides",
+            self.descriptors.len(),
+            self.overrides.len()
+        );
         Ok(())
     }
 
@@ -127,6 +135,94 @@ impl ProtocolRegistry {
 
     pub fn is_loaded(&self) -> bool {
         self.pool.is_some()
+    }
+
+    pub fn should_override(&self, key: u16) -> bool {
+        self.overrides.contains(&key)
+    }
+
+    fn compute_overrides(&mut self) {
+        use crate::cmd_ext::COMPILED_FINGERPRINTS;
+        let compiled: HashMap<u16, u64> = COMPILED_FINGERPRINTS.iter().copied().collect();
+        let mut overrides = HashSet::new();
+        for (&key, entry) in &self.meta {
+            if let Some(&compiled_fp) = compiled.get(&key) {
+                if let Some(desc) = self.descriptors.get(&entry.message) {
+                    let runtime_fp = Self::fingerprint_message(desc);
+                    if runtime_fp != compiled_fp {
+                        overrides.insert(key);
+                        info!(
+                            "[protocol_registry] override key={} ({}): schema changed",
+                            key, entry.event_name
+                        );
+                    }
+                }
+            }
+        }
+        self.overrides = overrides;
+    }
+
+    fn fingerprint_message(desc: &MessageDescriptor) -> u64 {
+        let mut entries: Vec<(u32, String)> = desc
+            .fields()
+            .map(|f| {
+                let type_str = Self::kind_to_fp_type(f.kind());
+                let labeled = if f.is_list() {
+                    format!("r:{}", type_str)
+                } else {
+                    type_str
+                };
+                (f.number(), format!("{}:{}", f.number(), labeled))
+            })
+            .collect();
+        entries.sort_by_key(|(num, _)| *num);
+        let combined: String = entries
+            .iter()
+            .map(|(_, s)| s.as_str())
+            .collect::<Vec<_>>()
+            .join(";");
+        Self::fnv1a(combined.as_bytes())
+    }
+
+    fn kind_to_fp_type(kind: Kind) -> String {
+        match kind {
+            Kind::Double => "double".into(),
+            Kind::Float => "float".into(),
+            Kind::Int32 => "int32".into(),
+            Kind::Int64 => "int64".into(),
+            Kind::Uint32 => "uint32".into(),
+            Kind::Uint64 => "uint64".into(),
+            Kind::Sint32 => "sint32".into(),
+            Kind::Sint64 => "sint64".into(),
+            Kind::Fixed32 => "fixed32".into(),
+            Kind::Fixed64 => "fixed64".into(),
+            Kind::Sfixed32 => "sfixed32".into(),
+            Kind::Sfixed64 => "sfixed64".into(),
+            Kind::Bool => "bool".into(),
+            Kind::String => "string".into(),
+            Kind::Bytes => "bytes".into(),
+            Kind::Enum(e) => {
+                let name = e.full_name();
+                let short = name.strip_prefix("pb.").unwrap_or(name);
+                format!("e.{}", short)
+            }
+            Kind::Message(m) => {
+                let name = m.full_name();
+                let short = name.strip_prefix("pb.").unwrap_or(name);
+                format!("m.{}", short)
+            }
+        }
+    }
+
+    fn fnv1a(data: &[u8]) -> u64 {
+        const OFFSET: u64 = 14695981039346656037;
+        const PRIME: u64 = 1099511628211;
+        let mut h = OFFSET;
+        for &b in data {
+            h ^= b as u64;
+            h = h.wrapping_mul(PRIME);
+        }
+        h
     }
 
     /// Create a new DynamicMessage for the given message name.

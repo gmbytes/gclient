@@ -16,6 +16,30 @@ pub fn dispatch(raw: &[u8], registry: &mut ProtocolRegistry) -> NetEvent {
         }
     };
 
+    // --- Override: runtime descriptor is newer than compiled struct ---
+    if registry.should_override(key_u16) {
+        if let Some(meta) = registry.get(key_u16).cloned() {
+            if err_u16 != 0 {
+                return NetEvent::RawMessage {
+                    key: key_u16,
+                    err: err_u16,
+                    body: vec![],
+                };
+            }
+            match registry.decode_generic(&meta.message, body) {
+                Ok(dynamic_msg) => {
+                    return NetEvent::GenericMessage {
+                        event_name: meta.event_name,
+                        key: key_u16,
+                        err: err_u16,
+                        fields: dynamic_msg,
+                    };
+                }
+                Err(_) => {}
+            }
+        }
+    }
+
     // --- Compiled channel: try strong-typed decode first ---
     if let Some(key) = EKey::from_u16(key_u16) {
         if err_u16 != 0 {

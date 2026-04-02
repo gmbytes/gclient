@@ -96,13 +96,16 @@ Rust 模式产出四类文件：
 
 ### 双通道解码
 
-`dispatcher.rs` 按优先级依次尝试三条路径，无需任何配置项：
+`dispatcher.rs` 按优先级依次尝试四条路径，无需任何配置项：
 
 ```
 WebSocket Raw Bytes
     │
     ▼
 PacketCodec::decode (key, err, body)
+    │
+    ├─► ProtocolRegistry.should_override(key)？
+    │       是 ──► 指纹不匹配，prost-reflect 动态解码 ──► NetEvent::GenericMessage
     │
     ├─► EKey::from_u16 命中？
     │       是 ──► 强类型 decode（cmd_ext match）──► NetEvent::XxxMessage
@@ -113,7 +116,8 @@ PacketCodec::decode (key, err, body)
     └─► 兜底 ──► NetEvent::RawMessage（传 body 字节）
 ```
 
-- **编译通道**：已编入 Rust 的协议走强类型快速路径，性能最优。
+- **指纹覆盖**：已编入 Rust 的协议如果字段发生变更（热更了新的 `protocol.desc`），运行时指纹比对检测到差异后自动跳过编译通道，走通用通道解码新字段。
+- **编译通道**：已编入 Rust 且指纹一致的协议走强类型快速路径，性能最优。
 - **通用通道**：未编入 Rust 但在 `protocol.desc` + `protocol_meta.json` 中存在的协议，由 `ProtocolRegistry` 用 `prost-reflect` 动态解码，无需重编 DLL 即可消费。
 - **兜底路径**：完全未知的 key 输出 `RawMessage`，携带原始 body 字节，GDScript 侧通过 `_on_raw` 接收。
 
@@ -124,6 +128,15 @@ PacketCodec::decode (key, err, body)
 - `decode_generic(msg_name, bytes) -> DynamicMessage`
 - `encode_generic(msg_name, fields) -> Vec<u8>`
 - `get_event_name(key_u16) -> Option<String>`
+- `should_override(key_u16) -> bool`
+
+#### 指纹覆盖机制
+
+`genpb` 生成 `cmd_ext.rs` 时，为每个服务端消息的字段布局计算 FNV-1a 指纹，写入 `COMPILED_FINGERPRINTS` 常量。`ProtocolRegistry` 加载 `protocol.desc` 时，从 descriptor 中计算同一算法的运行时指纹，两者不一致则将该 key 加入覆盖集合。`dispatcher.rs` 在编译通道之前检查覆盖集合，命中则直接走通用通道解码。
+
+指纹算法：对 message 内所有 field 按 `field_number` 排序，生成 `"number:type[;...]"` 规范字符串后取 FNV-1a 哈希。类型标记规则：标量用原始 proto 类型名，enum 加 `e.` 前缀，message 加 `m.` 前缀，repeated 字段加 `r:` 前缀。
+
+> **已知限制**：指纹仅覆盖顶层 command message 自身字段；若只修改了嵌套数据类型（如 `RoleSummaryData`）的字段而 command message 本身未变，指纹不会触发覆盖。此时需同步在 command message 上做变更（如添加保留字段），或执行完整的 Rust 重编。
 
 #### NetEvent
 
@@ -220,11 +233,13 @@ func _load_handlers():
 
 **路径 A：热更（不重编 Rust DLL）**
 
-1. 在 proto 中添加新 message 和 EKey
+适用于新增协议和已有协议字段变更两种场景：
+
+1. 在 proto 中添加新 message / EKey，或修改已有 message 的字段
 2. 运行 `genpb --lang rust --flag client`，产出新 `protocol.desc` + `protocol_meta.json`
-3. 编写 `handler_xxx.gd` 处理新协议
+3. 编写或更新 `handler_xxx.gd` 处理协议
 4. 将 `.desc` + `.json` + `.gd` 打入 PCK 热更包
-5. 客户端下载 PCK → Rust 通用通道自动解码 → GDScript handler 消费
+5. 客户端下载 PCK → ProtocolRegistry 加载后自动检测指纹差异 → 变更协议走通用通道解码 → GDScript handler 消费
 
 **路径 B：正式版本（重编 Rust）**
 
