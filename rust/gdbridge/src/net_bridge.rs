@@ -1,9 +1,9 @@
 use godot::prelude::*;
 use prost_reflect::{DynamicMessage, MapKey, ReflectMessage, Value as ProstValue};
 
-use netcore::event::{NetEvent, RoleInfo};
-use netcore::session::ConnectionState;
-use netcore::NetClient;
+use gnet::event::{NetEvent, RoleInfo};
+use gnet::session::ConnectionState;
+use gnet::NetClient;
 
 #[derive(GodotClass)]
 #[class(base = Node)]
@@ -15,7 +15,7 @@ pub struct NetClientBridge {
 #[godot_api]
 impl INode for NetClientBridge {
     fn init(base: Base<Node>) -> Self {
-        netcore::init_logging();
+        gnet::init_logging();
         Self {
             base,
             client: NetClient::new(),

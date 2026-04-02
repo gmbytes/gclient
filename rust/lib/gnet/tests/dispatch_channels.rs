@@ -3,12 +3,12 @@
 ///   2. Raw fallback      – unknown key, empty registry → NetEvent::RawMessage with body bytes
 ///   3. Error path        – err != 0 on a known key → appropriate error variant
 
-use netcore::cmd_ext::{EKey, decode_server_message};
-use netcore::codec::PacketCodec;
-use netcore::dispatcher;
-use netcore::event::NetEvent;
-use netcore::pb;
-use netcore::ProtocolRegistry;
+use gnet::cmd_ext::{EKey, decode_server_message};
+use gnet::codec::PacketCodec;
+use gnet::dispatcher;
+use gnet::event::NetEvent;
+use gnet::pb;
+use gnet::ProtocolRegistry;
 use prost::Message;
 
 // ── Path 1: Compiled channel ──────────────────────────────────────────────────
@@ -169,7 +169,7 @@ fn decode_server_message_compiled_channel() {
     let body = rsp.encode_to_vec();
     let msg = decode_server_message(EKey::RspCreateRole, &body).unwrap();
     match msg {
-        netcore::ServerMessage::RspCreateRole(decoded) => {
+        gnet::ServerMessage::RspCreateRole(decoded) => {
             let role = decoded.role.unwrap();
             assert_eq!(role.id, 55);
             assert_eq!(role.name, "warrior");

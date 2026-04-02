@@ -1,7 +1,7 @@
 use godot::prelude::*;
 use log::{info, warn};
 
-use configcore::ConfigStore;
+use gxlsx::ConfigStore;
 
 #[derive(GodotClass)]
 #[class(base = Node)]

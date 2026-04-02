@@ -113,16 +113,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1d07550c9036bf2ae0c684c4297d503f838287c83c53686d05370d0e139ae570"
 
 [[package]]
-name = "configcore"
-version = "0.1.0"
-dependencies = [
- "log",
- "serde",
- "serde_json",
- "sha2",
-]
-
-[[package]]
 name = "cpufeatures"
 version = "0.2.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -250,10 +240,10 @@ dependencies = [
 name = "gdbridge"
 version = "0.1.0"
 dependencies = [
- "configcore",
+ "gnet",
  "godot",
+ "gxlsx",
  "log",
- "netcore",
  "prost-reflect",
  "serde_json",
 ]
@@ -316,6 +306,26 @@ name = "glam"
 version = "0.28.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "779ae4bf7e8421cf91c0b3b64e7e8b40b862fba4d393f59150042de7c4965a94"
+
+[[package]]
+name = "gnet"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "env_logger",
+ "heck",
+ "log",
+ "prost",
+ "prost-build",
+ "prost-reflect",
+ "prost-types",
+ "protox",
+ "regex",
+ "serde",
+ "serde_json",
+ "tungstenite",
+ "url",
+]
 
 [[package]]
 name = "godot"
@@ -392,6 +402,16 @@ dependencies = [
  "proc-macro2",
  "quote",
  "venial",
+]
+
+[[package]]
+name = "gxlsx"
+version = "0.1.0"
+dependencies = [
+ "log",
+ "serde",
+ "serde_json",
+ "sha2",
 ]
 
 [[package]]
@@ -723,26 +743,6 @@ name = "nanoserde-derive"
 version = "0.1.22"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e943b2c21337b7e3ec6678500687cdc741b7639ad457f234693352075c082204"
-
-[[package]]
-name = "netcore"
-version = "0.1.0"
-dependencies = [
- "bytes",
- "env_logger",
- "heck",
- "log",
- "prost",
- "prost-build",
- "prost-reflect",
- "prost-types",
- "protox",
- "regex",
- "serde",
- "serde_json",
- "tungstenite",
- "url",
-]
 
 [[package]]
 name = "once_cell"

@@ -8,8 +8,8 @@ crate-type = ["cdylib"]
 
 [dependencies]
 godot = "0.2.4"
-netcore = { path = "../netcore" }
-configcore = { path = "../configcore" }
+gnet = { path = "../lib/gnet" }
+gxlsx = { path = "../lib/gxlsx" }
 prost-reflect = "0.14"
 serde_json = "1"
 log = "0.4"

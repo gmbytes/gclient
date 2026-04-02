@@ -17,10 +17,10 @@ if exist "%GENXLS%" (
             echo CONFIG GENERATION FAILED
             exit /b 1
         )
-        if not exist "%RUST_DIR%\configcore\src" mkdir "%RUST_DIR%\configcore\src"
-        copy /Y "%CONFIG_OUT%\config.gen.rs" "%RUST_DIR%\configcore\src\config.gen.rs" >nul
+        if not exist "%RUST_DIR%\lib\gxlsx\src" mkdir "%RUST_DIR%\lib\gxlsx\src"
+        copy /Y "%CONFIG_OUT%\config.gen.rs" "%RUST_DIR%\lib\gxlsx\src\config.gen.rs" >nul
         echo   -^> %CONFIG_OUT%\manifest.json + tables\
-        echo   -^> %RUST_DIR%\configcore\src\config.gen.rs
+        echo   -^> %RUST_DIR%\lib\gxlsx\src\config.gen.rs
     ) else (
         echo   Excel dir not found: %EXCEL_DIR% (skipping config generation)
     )

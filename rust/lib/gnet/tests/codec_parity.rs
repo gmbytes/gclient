@@ -1,6 +1,6 @@
-use netcore::codec::PacketCodec;
-use netcore::cmd_ext::{EKey, ClientMessage, encode_client_message, decode_server_message};
-use netcore::pb;
+use gnet::codec::PacketCodec;
+use gnet::cmd_ext::{EKey, ClientMessage, encode_client_message, decode_server_message};
+use gnet::pb;
 
 #[test]
 fn encode_decode_req_login() {
@@ -63,7 +63,7 @@ fn decode_rsp_login_empty_roles() {
     let result = decode_server_message(EKey::RspLogin, &body);
     assert!(result.is_ok());
     match result.unwrap() {
-        netcore::ServerMessage::RspLogin(decoded) => {
+        gnet::ServerMessage::RspLogin(decoded) => {
             assert_eq!(decoded.err, 0);
             assert_eq!(decoded.account, "test");
             assert_eq!(decoded.server_time, 1234567890);
@@ -94,7 +94,7 @@ fn decode_rsp_login_with_roles() {
     let body = rsp.encode_to_vec();
     let result = decode_server_message(EKey::RspLogin, &body).unwrap();
     match result {
-        netcore::ServerMessage::RspLogin(decoded) => {
+        gnet::ServerMessage::RspLogin(decoded) => {
             assert_eq!(decoded.roles.len(), 1);
             assert_eq!(decoded.roles[0].id, 42);
             assert_eq!(decoded.roles[0].name, "hero");

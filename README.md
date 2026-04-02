@@ -3,7 +3,7 @@
 `gclient` 是一个 Godot 客户端工程，采用 **GDScript + Rust GDExtension** 的组合开发：
 
 - `src/`：GDScript 场景与业务脚本（按功能模块）
-- `rust/`：Rust workspace（网络核心、配置核心、Godot 桥接）
+- `rust/`：Rust workspace（`lib/gnet` 网络核心、`lib/gxlsx` 配置核心、Godot 桥接）
 - `addons/gdbridge/`：GDExtension 接入点
 - `assets/`：音频、纹理、字体、着色器、主题
 - `data/`：静态配置与数据表
@@ -37,18 +37,19 @@ gclient/
 └── rust/                            # Rust workspace
     ├── Cargo.toml
     ├── .gdignore
-    ├── netcore/                     # 网络核心库（协议解码、连接管理）
-    │   ├── build.rs
-    │   └── src/
-    │       ├── client.rs
-    │       ├── codec.rs
-    │       ├── dispatcher.rs        # 双通道分发
-    │       ├── event.rs             # NetEvent（含 GenericMessage）
-    │       ├── protocol_registry.rs # descriptor 动态解码
-    │       ├── session.rs
-    │       └── transport.rs
-    ├── configcore/                  # 配置核心库
-    │   └── src/
+    ├── lib/                         # 可复用核心库（gdbridge 依赖）
+    │   ├── gnet/                    # 网络核心（协议解码、连接管理）
+    │   │   ├── build.rs
+    │   │   └── src/
+    │   │       ├── client.rs
+    │   │       ├── codec.rs
+    │   │       ├── dispatcher.rs        # 双通道分发
+    │   │       ├── event.rs             # NetEvent（含 GenericMessage）
+    │   │       ├── protocol_registry.rs # descriptor 动态解码
+    │   │       ├── session.rs
+    │   │       └── transport.rs
+    │   └── gxlsx/                   # 配置核心（manifest、按表加载）
+    │       └── src/
     ├── gdbridge/                    # GDExtension 桥接层（cdylib）
     │   └── src/
     │       ├── lib.rs
@@ -63,9 +64,9 @@ gclient/
 
 | 层级 | 位置 | 职责 |
 |------|------|------|
-| 传输层 | `codec.rs` / `client.rs` | WebSocket 收发、数据包拆包 |
+| 传输层 | `lib/gnet/src/codec.rs` / `client.rs` | WebSocket 收发、数据包拆包 |
 | 协议层 | `genpb` 产物（`pb.rs` / `cmd_ext.rs` / `protocol.desc` / `protocol_meta.json`） | 协议定义与元数据 |
-| 适配层 | `dispatcher.rs` / `net_bridge.rs` | 双通道解码、事件字典输出 |
+| 适配层 | `lib/gnet/src/dispatcher.rs` / `gdbridge/.../net_bridge.rs` | 双通道解码、事件字典输出 |
 | 业务层 | `net_manager.gd` / `handlers/` | 命名约定分发、热更处理器 |
 
 ### 协议生成（genpb）
@@ -73,7 +74,7 @@ gclient/
 `comm/tools/genpb` 是唯一的协议生成入口，支持多目标产出：
 
 ```bash
-genpb --lang rust --flag client --out gclient/rust/netcore/src/gen
+genpb --lang rust --flag client --out gclient/rust/lib/gnet/src/gen
 ```
 
 Rust 模式产出四类文件：
@@ -123,7 +124,7 @@ PacketCodec::decode (key, err, body)
 
 #### ProtocolRegistry
 
-`netcore/src/protocol_registry.rs` 启动时加载 `protocol.desc` + `protocol_meta.json`，持有 `prost_reflect::DescriptorPool`，提供：
+`lib/gnet/src/protocol_registry.rs` 启动时加载 `protocol.desc` + `protocol_meta.json`，持有 `prost_reflect::DescriptorPool`，提供：
 
 - `decode_generic(msg_name, bytes) -> DynamicMessage`
 - `encode_generic(msg_name, fields) -> Vec<u8>`
@@ -254,7 +255,7 @@ func _load_handlers():
 ## 关键约定
 
 - `gdbridge` 是唯一的 cdylib 桥接 crate，内部按模块文件扩展，避免多 `.gdextension` 的复杂度。
-- 新增 Rust 功能时，在 `rust/` 下添加独立核心库 crate，在 `gdbridge/src/` 中增加对应桥接文件。
+- 新增 Rust 功能时，在 `rust/lib/` 下添加独立核心库 crate，在 `gdbridge/src/` 中增加对应桥接文件。
 - `protocol_meta.json` 不区分通道——编译通道由 Rust 二进制内编译了哪些协议自动决定，meta 只提供 key-message-event_name 的映射。
 - `rust/.gdignore` 避免 Godot 扫描 Rust 构建目录。
 - `comm/tools/genpb/proto/*.proto` 是唯一协议真相源，Go / C# / Rust 生成均由 `genpb` 统一产出。
