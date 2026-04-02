@@ -2,7 +2,7 @@ use std::time::{Duration, Instant};
 
 use log::{debug, info, warn};
 
-use crate::cmd_ext::{self, ClientMessage};
+use crate::typed_protocol::{self, ClientMessage};
 use crate::codec::PacketCodec;
 use crate::dispatcher;
 use crate::event::NetEvent;
@@ -49,7 +49,7 @@ impl NetClient {
         }
     }
 
-    /// Load protocol.desc + protocol_meta.json from a directory for the generic channel.
+    /// Load protocol.desc + protocol_manifest.json from a directory for the hotfix channel.
     pub fn load_protocol_registry(&mut self, dir: &str) {
         match self.registry.load_from_dir(dir) {
             Ok(()) => info!("[net] protocol registry loaded from {}", dir),
@@ -242,7 +242,7 @@ impl NetClient {
     // ── Internals ──
 
     fn send_message(&mut self, msg: &ClientMessage) {
-        let (key, body) = cmd_ext::encode_client_message(msg);
+        let (key, body) = typed_protocol::encode_client_message(msg);
         self.send_packet(key.as_u16(), &body);
     }
 
@@ -286,13 +286,18 @@ impl NetClient {
 
     fn update_session_from_event(&mut self, event: &NetEvent) {
         match event {
-            NetEvent::LoginRoleResponse { err, .. } if *err == 0 => {
-                self.session.on_login_role_ok(self.last_login_role_id);
-                info!("[net] login role success, role_id={}", self.last_login_role_id);
-            }
-            NetEvent::KickRole { kick_type } => {
-                self.stop_heartbeat();
-                warn!("[net] kicked, type={}", kick_type);
+            NetEvent::ProtocolEvent { event_name, err, .. } if *err == 0 => {
+                match event_name.as_str() {
+                    "rsp_login_role" => {
+                        self.session.on_login_role_ok(self.last_login_role_id);
+                        info!("[net] login role success, role_id={}", self.last_login_role_id);
+                    }
+                    "dsp_kick_role" => {
+                        self.stop_heartbeat();
+                        warn!("[net] kicked by server");
+                    }
+                    _ => {}
+                }
             }
             _ => {}
         }

@@ -1,10 +1,10 @@
 pub mod pb {
-    include!(concat!(env!("OUT_DIR"), "/pb.rs"));
+    include!("gen/pb.rs");
 }
 
 #[allow(unused_imports)]
-pub mod cmd_ext {
-    include!(concat!(env!("OUT_DIR"), "/cmd_ext.rs"));
+pub mod typed_protocol {
+    include!("gen/typed_protocol.rs");
 }
 
 pub mod codec;
@@ -15,7 +15,7 @@ pub mod dispatcher;
 pub mod protocol_registry;
 pub mod client;
 
-pub use cmd_ext::{
+pub use typed_protocol::{
     ClientMessage, EKey, ServerMessage, decode_server_message, encode_client_message,
 };
 pub use codec::PacketCodec;

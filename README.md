@@ -21,7 +21,7 @@ gclient/
 │   ├── core/
 │   │   ├── config/
 │   │   ├── net/
-│   │   │   ├── net_manager.gd       # 命名约定自动分发 + 动态加载
+│   │   │   ├── net_manager.gd       # 事件分发（建议迁移到 NetEventGd + event_name）
 │   │   │   └── handlers/            # 热更处理器模块目录
 │   │   └── state/
 │   ├── game/
@@ -37,15 +37,17 @@ gclient/
 └── rust/                            # Rust workspace
     ├── Cargo.toml
     ├── .gdignore
-    ├── lib/                         # 可复用核心库（gdbridge 依赖）
+    ├── lib/
     │   ├── gnet/                    # 网络核心（协议解码、连接管理）
-    │   │   ├── build.rs
     │   │   └── src/
     │   │       ├── client.rs
     │   │       ├── codec.rs
-    │   │       ├── dispatcher.rs        # 双通道分发
-    │   │       ├── event.rs             # NetEvent（含 GenericMessage）
-    │   │       ├── protocol_registry.rs # descriptor 动态解码
+    │   │       ├── dispatcher.rs    # 编译通道 + 热更覆盖 + 动态 fallback
+    │   │       ├── event.rs         # NetEvent（ProtocolEvent / HotfixEvent）
+    │   │       ├── protocol_registry.rs  # protocol.desc + protocol_manifest.json
+    │   │       ├── gen/
+    │   │       │   ├── pb.rs            # prost 生成（由 genpb 写入）
+    │   │       │   └── typed_protocol.rs # EKey / 消息枚举 / 编解码（由 genpb 写入）
     │   │       ├── session.rs
     │   │       └── transport.rs
     │   └── gxlsx/                   # 配置核心（manifest、按表加载）
@@ -53,51 +55,56 @@ gclient/
     ├── gdbridge/                    # GDExtension 桥接层（cdylib）
     │   └── src/
     │       ├── lib.rs
-    │       ├── net_bridge.rs        # 网络桥接 + send_generic
+    │       ├── net_bridge.rs        # poll_events → Array<Gd<NetEventGd>>
+    │       ├── gen/
+    │       │   └── godot_bridge_gen.rs  # GodotClass + mapper（由 genpb 写入）
     │       └── config_bridge.rs
     └── scripts/build.ps1
 ```
 
 ## 协议架构
 
-协议链路采用 **双通道解码 + 命名约定自动分发** 的分层架构，各层职责清晰：
+协议链路为 **descriptor/manifest 单一真源 → Rust 强类型 → GodotClass 主通道**，热更仍通过 `prost-reflect` 走旁路。
 
 | 层级 | 位置 | 职责 |
 |------|------|------|
-| 传输层 | `lib/gnet/src/codec.rs` / `client.rs` | WebSocket 收发、数据包拆包 |
-| 协议层 | `genpb` 产物（`pb.rs` / `cmd_ext.rs` / `protocol.desc` / `protocol_meta.json`） | 协议定义与元数据 |
-| 适配层 | `lib/gnet/src/dispatcher.rs` / `gdbridge/.../net_bridge.rs` | 双通道解码、事件字典输出 |
-| 业务层 | `net_manager.gd` / `handlers/` | 命名约定分发、热更处理器 |
+| 传输层 | `lib/gnet/src/codec.rs` / `client.rs` | WebSocket 收发、包头 `[key][err][len][body]` |
+| 协议元数据 | `genpb` 产出 `protocol_manifest.json` + `protocol.desc` | manifest 索引；descriptor 供动态解码与指纹 |
+| 编译协议 API | `gen/typed_protocol.rs`（`EKey`、`ServerMessage`、`ClientMessage`） | prost 编解码入口、`event_name()`、`COMPILED_FINGERPRINTS` |
+| 分发层 | `dispatcher.rs` | 覆盖检测 → 编译通道 `ProtocolEvent`；否则动态通道 `HotfixEvent`；未知 `RawMessage` |
+| Godot 桥 | `gdbridge` + `gen/godot_bridge_gen.rs` | `NetEventGd`、`get_data()` 强类型 payload、`get_hotfix_fields()` 兜底 |
+| 业务层 | `net_manager.gd` / `handlers/` | 按 `event_name` 或类型分发 |
 
 ### 协议生成（genpb）
 
-`comm/tools/genpb` 是唯一的协议生成入口，支持多目标产出：
+`comm/tools/genpb` 是唯一协议生成入口。**Rust 侧元数据来自 `FileDescriptorSet`，不再维护与 descriptor 并行的正则解析。**
+
+推荐一次性生成 gnet + gdbridge 产物（需本机 `protoc` 与 `protoc-gen-prost`）：
 
 ```bash
-genpb --lang rust --flag client --out gclient/rust/lib/gnet/src/gen
+cd comm/tools/genpb
+go run -buildvcs=false . --lang rust --flag client \
+  --rust_out  ../../gclient/rust/lib/gnet/src/gen \
+  --godot_out ../../gclient/rust/gdbridge/src/gen
 ```
 
-Rust 模式产出四类文件：
+仅服务端 Go 时：
 
-| 文件 | 作用 |
-|------|------|
-| `pb.rs` | Rust protobuf 绑定（prost 生成） |
-| `cmd_ext.rs` | `EKey`、`ClientMessage`、`ServerMessage`、编解码入口、事件名规则 |
-| `protocol.desc` | 二进制 `FileDescriptorSet`，用于通用通道动态解码 |
-| `protocol_meta.json` | EKey → message 名 + 事件名映射表（热更核心） |
-
-`protocol_meta.json` 示例：
-
-```json
-{
-  "2001": { "ekey": "RspLogin",  "message": "RspLogin",  "event_name": "rsp_login" },
-  "33005": { "ekey": "DspMove",  "message": "DspMove",   "event_name": "dsp_move" }
-}
+```bash
+go run -buildvcs=false . --lang go --flag server --go_out <server/pb路径>
 ```
 
-### 双通道解码
+| 输出路径 | 文件 | 作用 |
+|----------|------|------|
+| `--rust_out` | `pb.rs` | prost 消息类型 |
+| `--rust_out` | `typed_protocol.rs` | `EKey`、`ClientMessage` / `ServerMessage`、`encode_client_message` / `decode_server_message`、`COMPILED_FINGERPRINTS`（递归 schema 指纹） |
+| `--rust_out` | `protocol_manifest.json` | 协议索引：ekey、方向、kind、`event_name`、字段 schema、fingerprint 等（**替代**旧 `protocol_meta.json`） |
+| `--rust_out` | `protocol.desc` | `FileDescriptorSet`，热更 / `prost-reflect` 动态编解码 |
+| `--godot_out`（可选） | `godot_bridge_gen.rs` | 嵌套/下行消息 `*Gd` GodotClass、`NetEventGd`、`server_message_to_event` / `hotfix_to_event` |
 
-`dispatcher.rs` 按优先级依次尝试四条路径，无需任何配置项：
+`protocol_manifest.json` 中 `messages[]` 每条大致包含：`ekey_value`、`ekey_name`、`message_name`、`direction`、`kind`、`event_name`、`field_schema`、`fingerprint` / `fingerprint_u64`、`hotfix_fallback` 等（详见 genpb `manifest.go`）。
+
+### 分发优先级（dispatcher）
 
 ```
 WebSocket Raw Bytes
@@ -106,159 +113,110 @@ WebSocket Raw Bytes
 PacketCodec::decode (key, err, body)
     │
     ├─► ProtocolRegistry.should_override(key)？
-    │       是 ──► 指纹不匹配，prost-reflect 动态解码 ──► NetEvent::GenericMessage
+    │       是 ──► 递归指纹与编译时不一致 ──► NetEvent::HotfixEvent { DynamicMessage, … }
     │
-    ├─► EKey::from_u16 命中？
-    │       是 ──► 强类型 decode（cmd_ext match）──► NetEvent::XxxMessage
+    ├─► EKey::from_u16 命中 且 decode_server_message 成功？
+    │       是 ──► NetEvent::ProtocolEvent { event_name, msg: ServerMessage, … }
     │
-    ├─► ProtocolRegistry 有该 key 的 descriptor？
-    │       是 ──► prost-reflect 动态解码 ──► NetEvent::GenericMessage
+    ├─► manifest 有该 key 且 descriptor 可解码？
+    │       是 ──► NetEvent::HotfixEvent
     │
-    └─► 兜底 ──► NetEvent::RawMessage（传 body 字节）
+    └─► NetEvent::RawMessage
 ```
 
-- **指纹覆盖**：已编入 Rust 的协议如果字段发生变更（热更了新的 `protocol.desc`），运行时指纹比对检测到差异后自动跳过编译通道，走通用通道解码新字段。
-- **编译通道**：已编入 Rust 且指纹一致的协议走强类型快速路径，性能最优。
-- **通用通道**：未编入 Rust 但在 `protocol.desc` + `protocol_meta.json` 中存在的协议，由 `ProtocolRegistry` 用 `prost-reflect` 动态解码，无需重编 DLL 即可消费。
-- **兜底路径**：完全未知的 key 输出 `RawMessage`，携带原始 body 字节，GDScript 侧通过 `_on_raw` 接收。
+- **编译通道**：`ProtocolEvent` 内为 `Box<ServerMessage>`，GD 侧经 `server_message_to_event` 得到带 `Gd<XxxGd>` 的 `NetEventGd`。
+- **热更旁路**：`HotfixEvent`；`net_bridge` 将其展平为 `NetEventGd.hotfix_fields`（Dictionary），不作为主业务 API。
+- **指纹**：运行时与 `typed_protocol.rs` 中 `COMPILED_FINGERPRINTS` 比较；算法为**递归**子 message schema 字符串再 FNV-1a（与 genpb `manifest.go` 一致），避免仅改嵌套类型却漏检的问题。
 
-#### ProtocolRegistry
+### ProtocolRegistry
 
-`lib/gnet/src/protocol_registry.rs` 启动时加载 `protocol.desc` + `protocol_meta.json`，持有 `prost_reflect::DescriptorPool`，提供：
+`protocol_registry.rs` 加载 **`protocol.desc` + `protocol_manifest.json`**（不再使用 `protocol_meta.json`），提供：
 
-- `decode_generic(msg_name, bytes) -> DynamicMessage`
-- `encode_generic(msg_name, fields) -> Vec<u8>`
-- `get_event_name(key_u16) -> Option<String>`
-- `should_override(key_u16) -> bool`
+- `decode_generic` / `encode_from_json_value` / `send_generic` 路径
+- `get_event_name(key)`、`should_override(key)`
+- 递归指纹计算用于 `should_override`
 
-#### 指纹覆盖机制
-
-`genpb` 生成 `cmd_ext.rs` 时，为每个服务端消息的字段布局计算 FNV-1a 指纹，写入 `COMPILED_FINGERPRINTS` 常量。`ProtocolRegistry` 加载 `protocol.desc` 时，从 descriptor 中计算同一算法的运行时指纹，两者不一致则将该 key 加入覆盖集合。`dispatcher.rs` 在编译通道之前检查覆盖集合，命中则直接走通用通道解码。
-
-指纹算法：对 message 内所有 field 按 `field_number` 排序，生成 `"number:type[;...]"` 规范字符串后取 FNV-1a 哈希。类型标记规则：标量用原始 proto 类型名，enum 加 `e.` 前缀，message 加 `m.` 前缀，repeated 字段加 `r:` 前缀。
-
-> **已知限制**：指纹仅覆盖顶层 command message 自身字段；若只修改了嵌套数据类型（如 `RoleSummaryData`）的字段而 command message 本身未变，指纹不会触发覆盖。此时需同步在 command message 上做变更（如添加保留字段），或执行完整的 Rust 重编。
-
-#### NetEvent
+### NetEvent（Rust）
 
 ```rust
 pub enum NetEvent {
-    // 编译通道 variant（强类型，随协议增量扩展）
-    RspLogin { ... },
-    DspMove  { ... },
-    // ...
-
-    // 通用通道：descriptor 动态解码
-    GenericMessage {
+    Connected,
+    Disconnected { reason: String },
+    ConnectError { message: String },
+    /// 主通道：强类型 ServerMessage
+    ProtocolEvent {
+        event_name: String,
+        key: u16,
+        err: u16,
+        msg: Box<ServerMessage>,
+    },
+    /// 热更 / 动态解码旁路
+    HotfixEvent {
         event_name: String,
         key: u16,
         err: u16,
         fields: DynamicMessage,
     },
-
-    // 兜底：完全未知协议
-    RawMessage {
-        key: u16,
-        err: u16,
-        body: Vec<u8>,
-    },
-
-    // 框架事件
-    Connected,
-    Disconnected,
-    Error { message: String },
+    RawMessage { key: u16, err: u16, body: Vec<u8> },
 }
 ```
 
-### Rust → GDScript 事件字典约定
+新增下行协议时：**无需**再手改 `dispatcher`、`NetEvent` 业务变体或旧版 `event_to_dict`；重新运行 genpb 更新 `typed_protocol.rs` 与 `godot_bridge_gen.rs` 即可。
 
-`net_bridge.rs` 的 `event_to_dict` 保证编译通道与通用通道输出格式一致：
+### Godot：`poll_events` → `NetEventGd`
 
-| 字段 | 规则 |
-|------|------|
-| `type` | snake_case 事件名（如 `rsp_login`、`dsp_move`） |
-| 业务字段 | 统一 snake_case，与 proto 字段名一致 |
-| 嵌套 message | 递归展为子 `Dictionary` |
-| repeated 字段 | 映射为 `Array` |
-| `RawMessage` | `{ "type": "raw", "key": u16, "err": u16, "body": PackedByteArray }` |
+`net_bridge.rs` 的 `poll_events()` 返回 **`Array<Gd<NetEventGd>>`**（不再是 `Dictionary`）。
 
-新增 `send_generic(key: int, fields: Dictionary)` 方法，通过 descriptor 动态编码发送，支持通用通道的发送侧。
+| 成员 / 方法 | 含义 |
+|-------------|------|
+| `event_name` | snake_case，如 `rsp_login`、`connected`、`dsp_move` |
+| `key` / `err` | 线协议上的 EKey 与错误码 |
+| `get_data()` | 成功编译解码时：`Gd<RspLoginGd>` 等；框架事件多为空 |
+| `get_hotfix_fields()` | `HotfixEvent` 或框架附带信息时的 `Dictionary` |
 
-### GDScript 命名约定自动分发
-
-`net_manager.gd` 的 `_handle_event` 是稳定入口，不再随协议增加而修改：
+示例（GDScript）：
 
 ```gdscript
-func _handle_event(event: Dictionary):
-    var method_name = "_on_" + event.get("type", "")
-    if _handlers.has(method_name):
-        _handlers[method_name].call(method_name, event)
-    elif has_method(method_name):
-        call(method_name, event)
-    else:
-        _on_unknown_event(event)
+for event in net_client.poll_events():
+    match event.event_name:
+        "connected":
+            _on_connected()
+        "rsp_login":
+            var data = event.get_data() as RspLoginGd
+            if data:
+                _on_rsp_login(data)
+        _:
+            if event.get_hotfix_fields().size() > 0:
+                _on_hotfix(event)
 ```
 
-框架级保留方法：`_on_connected`、`_on_disconnected`、`_on_error`、`_on_raw`、`_on_unknown_event`。
+`send_generic(key, fields: Dictionary)` 仍保留，用于调试 / 热更发包。
 
-业务协议全部走命名约定：`rsp_login` → `_on_rsp_login(event)`，`dsp_move` → `_on_dsp_move(event)`。
+### GDScript 命名约定与热更处理器
 
-#### 热更处理器动态加载
+`net_manager.gd` 可继续用 `event_name` 做方法名映射（`_on_rsp_login` 等），入参从 `Dictionary` 逐步改为 **`NetEventGd` + `get_data()`**。  
+`handlers/` 动态加载机制不变；热更包需包含更新后的 **`protocol.desc` + `protocol_manifest.json`**（以及可选 `.gd`）。
 
-业务处理器放在 `src/core/net/handlers/` 下，启动时由 `net_manager.gd` 自动扫描加载：
-
-```gdscript
-var _handlers: Dictionary = {}
-
-func _load_handlers():
-    var dir = DirAccess.open("res://src/core/net/handlers/")
-    if dir == null:
-        return
-    dir.list_dir_begin()
-    var fname = dir.get_next()
-    while fname != "":
-        if fname.ends_with(".gd"):
-            var script = ResourceLoader.load("res://src/core/net/handlers/" + fname)
-            if script:
-                var handler = script.new()
-                handler.bind(self)
-                for method in handler.get_method_list():
-                    if method.name.begins_with("_on_"):
-                        _handlers[method.name] = handler
-        fname = dir.get_next()
-```
-
-热更时将新 `.gd` 打入 PCK，客户端重新扫描即可生效，无需修改分发逻辑。
-
-### 新增协议的两条路径
+### 新增协议路径
 
 **路径 A：热更（不重编 Rust DLL）**
 
-适用于新增协议和已有协议字段变更两种场景：
-
-1. 在 proto 中添加新 message / EKey，或修改已有 message 的字段
-2. 运行 `genpb --lang rust --flag client`，产出新 `protocol.desc` + `protocol_meta.json`
-3. 编写或更新 `handler_xxx.gd` 处理协议
-4. 将 `.desc` + `.json` + `.gd` 打入 PCK 热更包
-5. 客户端下载 PCK → ProtocolRegistry 加载后自动检测指纹差异 → 变更协议走通用通道解码 → GDScript handler 消费
+1. 修改 proto / EKey  
+2. `genpb --lang rust --flag client` 生成新的 `protocol.desc` + `protocol_manifest.json`  
+3. 更新 handler；将 desc + manifest 打入 PCK  
 
 **路径 B：正式版本（重编 Rust）**
 
-1. proto 中添加新 message 和 EKey
-2. 运行 `genpb`，产出 Rust 编译通道代码 + desc + meta
-3. 补充 `NetEvent` variant + `convert_server_message` + `event_to_dict`
-4. 重编 Rust → 协议自然升级到编译通道，性能更优
-5. 通用通道的回退能力仍然保留
-
-两条路径不冲突：协议先通过热更上线验证，稳定后下个版本编入 Rust 获得强类型与最优性能。
+1. 修改 proto  
+2. 运行 genpb（含 `--rust_out` 与建议的 `--godot_out`）  
+3. 重编 `rust` workspace；编译通道与 GodotClass 随生成物自动一致  
 
 ## 关键约定
 
-- `gdbridge` 是唯一的 cdylib 桥接 crate，内部按模块文件扩展，避免多 `.gdextension` 的复杂度。
-- 新增 Rust 功能时，在 `rust/lib/` 下添加独立核心库 crate，在 `gdbridge/src/` 中增加对应桥接文件。
-- `protocol_meta.json` 不区分通道——编译通道由 Rust 二进制内编译了哪些协议自动决定，meta 只提供 key-message-event_name 的映射。
-- `rust/.gdignore` 避免 Godot 扫描 Rust 构建目录。
-- `comm/tools/genpb/proto/*.proto` 是唯一协议真相源，Go / C# / Rust 生成均由 `genpb` 统一产出。
+- `gdbridge` 是唯一 cdylib；新 Rust 能力放在 `rust/lib/`，在 `gdbridge/src/` 增加桥接。  
+- `comm/tools/genpb/proto/*.proto` 为协议真源；**客户端 Rust/Godot 由 genpb 统一生成**（Go 服务端仍用 `gen_go.go`，与 manifest 无关）。  
+- **C# 客户端生成已从 genpb 移除**；若仍有 C# 工程，需自行维护或其它管线。  
+- `rust/.gdignore` 避免 Godot 扫描构建目录。  
 
 ## 构建
 
@@ -269,29 +227,25 @@ cd rust
 ./scripts/build.ps1
 ```
 
-发布构建：
+发布：
 
 ```powershell
 ./scripts/build.ps1 -Profile release
 ```
 
-产物自动复制到 `addons/gdbridge/bin/`。
+产物复制到 `addons/gdbridge/bin/`。
 
 ### 从项目根目录构建
 
-- Windows：`build.bat`
-- Linux/macOS：`build.sh`
+- Windows：`build.bat`  
+- Linux/macOS：`build.sh`  
 
 ## 运行验证
 
-使用 Godot 打开 `project.godot`，或命令行执行：
+打开 `project.godot` 或：
 
 ```powershell
 <godot_bin> --headless --path . --quit
 ```
 
-若扩展加载成功，日志应包含：
-
-- `Initialize godot-rust ...`
-- `[Net] NetClientBridge ready`
-- `[Net] ProtocolRegistry loaded: N messages`
+扩展加载成功时日志中可见 godot-rust 初始化及网络桥就绪信息；若加载了协议目录，registry 会打印 manifest 条目数量。

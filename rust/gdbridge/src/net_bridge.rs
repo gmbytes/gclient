@@ -1,9 +1,13 @@
 use godot::prelude::*;
 use prost_reflect::{DynamicMessage, MapKey, ReflectMessage, Value as ProstValue};
 
-use gnet::event::{NetEvent, RoleInfo};
+use gnet::event::NetEvent;
 use gnet::session::ConnectionState;
 use gnet::NetClient;
+
+use crate::godot_bridge_gen::{
+    self, hotfix_to_event, make_framework_event, server_message_to_event, NetEventGd,
+};
 
 #[derive(GodotClass)]
 #[class(base = Node)]
@@ -42,7 +46,8 @@ impl NetClientBridge {
             .set_reconnect(enabled, interval_secs, max_retries as u32);
     }
 
-    /// Load protocol.desc + protocol_meta.json from a directory for the generic decode channel.
+    /// Load `protocol.desc` + `protocol_manifest.json` from a directory
+    /// to enable the hotfix fallback channel.
     #[func]
     fn load_protocol_registry(&mut self, dir: GString) {
         self.client.load_protocol_registry(&dir.to_string());
@@ -79,7 +84,7 @@ impl NetClientBridge {
         self.client.send_move(x, y, z);
     }
 
-    /// Generic send: encode `fields` Dictionary using the protocol descriptor and send as key.
+    /// Generic / hotfix send: encode `fields` Dictionary via the protocol registry.
     #[func]
     fn send_generic(&mut self, key: i64, fields: Dictionary) {
         let json_val = dict_to_json_value(&fields);
@@ -102,167 +107,103 @@ impl NetClientBridge {
     fn get_connection_state(&self) -> GString {
         match self.client.connection_state() {
             ConnectionState::Disconnected => "disconnected".into(),
-            ConnectionState::Connecting => "connecting".into(),
-            ConnectionState::Connected => "connected".into(),
-            ConnectionState::LoggingIn => "logging_in".into(),
-            ConnectionState::InGame => "in_game".into(),
+            ConnectionState::Connecting   => "connecting".into(),
+            ConnectionState::Connected    => "connected".into(),
+            ConnectionState::LoggingIn    => "logging_in".into(),
+            ConnectionState::InGame       => "in_game".into(),
         }
     }
 
+    /// Primary event poll API.
+    ///
+    /// Returns `Array<Gd<NetEventGd>>`.  In GDScript:
+    ///   ```gdscript
+    ///   for event in net_client.poll_events():
+    ///       match event.event_name:
+    ///           "connected":   _on_connected()
+    ///           "rsp_login":   _on_login(event.get_data() as RspLoginGd)
+    ///           "dsp_move":    _on_move(event.get_data() as DspMoveGd)
+    ///           _:             pass
+    ///   ```
     #[func]
-    fn poll_events(&mut self) -> Array<Dictionary> {
-        let events = self.client.poll_events();
-        let mut arr = Array::new();
-        for event in events {
-            arr.push(&event_to_dict(&event));
+    fn poll_events(&mut self) -> Array<Gd<NetEventGd>> {
+        let raw_events = self.client.poll_events();
+        let mut arr: Array<Gd<NetEventGd>> = Array::new();
+        for event in raw_events {
+            arr.push(&net_event_to_godot(event));
         }
         arr
     }
 }
 
-// ── Event → Dictionary (Rust → GDScript bridge) ──
+// ── NetEvent → Gd<NetEventGd> ────────────────────────────────────────────────
 
-fn event_to_dict(event: &NetEvent) -> Dictionary {
-    let mut d = Dictionary::new();
+fn net_event_to_godot(event: NetEvent) -> Gd<NetEventGd> {
     match event {
-        NetEvent::Connected => {
-            d.set("type", "connected");
-        }
+        NetEvent::Connected => make_framework_event("connected"),
+
         NetEvent::Disconnected { reason } => {
-            d.set("type", "disconnected");
-            d.set("reason", GString::from(reason.as_str()));
+            let ev = make_framework_event("disconnected");
+            // reason is accessible via hotfix_fields if needed; here we embed it
+            // in a Dictionary so GDScript can read it.
+            let mut fields = Dictionary::new();
+            fields.set("reason", GString::from(reason));
+            // Wrap using hotfix_to_event to carry the reason string to GDScript.
+            hotfix_to_event("disconnected", 0, 0, fields)
         }
+
         NetEvent::ConnectError { message } => {
-            d.set("type", "error");
-            d.set("message", GString::from(message.as_str()));
+            let mut fields = Dictionary::new();
+            fields.set("message", GString::from(message));
+            hotfix_to_event("error", 0, 0, fields)
         }
-        NetEvent::LoginResponse {
-            err,
-            fast,
-            roles,
-            account,
-            server_time,
-        } => {
-            d.set("type", "rsp_login");
-            d.set("err", *err);
-            d.set("fast", *fast);
-            d.set("account", GString::from(account.as_str()));
-            d.set("server_time", *server_time);
-            d.set("roles", roles_to_array(roles));
+
+        // ── Primary typed channel ──
+        NetEvent::ProtocolEvent { event_name: _, key, err, msg } => {
+            server_message_to_event(key, err, &msg)
         }
-        NetEvent::CreateRoleResponse { err, role } => {
-            d.set("type", "rsp_create_role");
-            d.set("err", *err);
-            if let Some(r) = role {
-                d.set("role", role_to_dict(r));
-            }
+
+        // ── Hotfix / fallback channel ──
+        NetEvent::HotfixEvent { event_name, key, err, fields } => {
+            let dict = dynamic_msg_to_dict(&fields);
+            hotfix_to_event(&event_name, key, err, dict)
         }
-        NetEvent::LoginRoleResponse { err, regain } => {
-            d.set("type", "rsp_login_role");
-            d.set("err", *err);
-            d.set("regain", *regain);
-        }
-        NetEvent::Pong | NetEvent::PongZzz => {
-            d.set("type", "pong");
-        }
-        NetEvent::LoginData { regain } => {
-            d.set("type", "dsp_login");
-            d.set("regain", *regain);
-        }
-        NetEvent::KickRole { kick_type } => {
-            d.set("type", "kick_role");
-            d.set("kick_type", *kick_type);
-        }
-        NetEvent::ServerMaintain {
-            reboot_time,
-            shutdown_time,
-        } => {
-            d.set("type", "server_maintain");
-            d.set("reboot_time", *reboot_time);
-            d.set("shutdown_time", *shutdown_time);
-        }
-        NetEvent::EnterZoneResponse => {
-            d.set("type", "rsp_enter_zone");
-        }
-        NetEvent::MoveResponse {
-            role_id,
-            x,
-            y,
-            z,
-        } => {
-            d.set("type", "rsp_move");
-            d.set("role_id", *role_id);
-            d.set("x", *x);
-            d.set("y", *y);
-            d.set("z", *z);
-        }
-        NetEvent::MoveSync {
-            role_id,
-            x,
-            y,
-            z,
-        } => {
-            d.set("type", "dsp_move");
-            d.set("role_id", *role_id);
-            d.set("x", *x);
-            d.set("y", *y);
-            d.set("z", *z);
-        }
-        NetEvent::EnterZoneNotify => {
-            d.set("type", "dsp_enter_zone");
-        }
-        // Generic channel: auto-flatten DynamicMessage fields into the dict.
-        // type = event_name (e.g. "rsp_shop_list"), all proto fields are top-level keys.
-        NetEvent::GenericMessage {
-            event_name,
-            key: _,
-            err,
-            fields,
-        } => {
-            d.set("type", GString::from(event_name.as_str()));
-            d.set("err", *err as i64);
-            for field_desc in fields.descriptor().fields() {
-                let value = fields.get_field(&field_desc);
-                d.set(field_desc.name(), prost_value_to_variant(&*value));
-            }
-        }
-        // Raw fallback: pass actual body bytes as PackedByteArray.
+
+        // ── Last-resort raw fallback ──
         NetEvent::RawMessage { key, err, body } => {
-            d.set("type", "raw");
-            d.set("key", *key as i64);
-            d.set("err", *err as i64);
+            let mut fields = Dictionary::new();
+            fields.set("key",  key as i64);
+            fields.set("err",  err as i64);
             let mut byte_arr = PackedByteArray::new();
             for b in body {
-                byte_arr.push(*b);
+                byte_arr.push(b);
             }
-            d.set("body", byte_arr);
+            fields.set("body", byte_arr);
+            hotfix_to_event("raw", key, err, fields)
         }
     }
-    d
 }
 
-// ── DynamicMessage → Godot Variant helpers ──
+// ── DynamicMessage → Godot Dictionary helpers ─────────────────────────────────
 
 fn prost_value_to_variant(value: &ProstValue) -> Variant {
     match value {
-        ProstValue::Bool(b) => b.to_variant(),
-        ProstValue::I32(v) => (*v as i64).to_variant(),
-        ProstValue::I64(v) => v.to_variant(),
-        ProstValue::U32(v) => (*v as i64).to_variant(),
-        ProstValue::U64(v) => (*v as i64).to_variant(),
-        ProstValue::F32(v) => (*v as f64).to_variant(),
-        ProstValue::F64(v) => v.to_variant(),
-        ProstValue::String(s) => GString::from(s.as_str()).to_variant(),
-        ProstValue::Bytes(b) => {
+        ProstValue::Bool(b)         => b.to_variant(),
+        ProstValue::I32(v)          => (*v as i64).to_variant(),
+        ProstValue::I64(v)          => v.to_variant(),
+        ProstValue::U32(v)          => (*v as i64).to_variant(),
+        ProstValue::U64(v)          => (*v as i64).to_variant(),
+        ProstValue::F32(v)          => (*v as f64).to_variant(),
+        ProstValue::F64(v)          => v.to_variant(),
+        ProstValue::String(s)       => GString::from(s.as_str()).to_variant(),
+        ProstValue::Bytes(b)        => {
             let mut arr = PackedByteArray::new();
-            for byte in b.iter() {
-                arr.push(*byte);
-            }
+            for byte in b.iter() { arr.push(*byte); }
             arr.to_variant()
         }
-        ProstValue::EnumNumber(n) => (*n as i64).to_variant(),
-        ProstValue::Message(sub_msg) => dynamic_msg_to_dict(sub_msg).to_variant(),
-        ProstValue::List(items) => {
+        ProstValue::EnumNumber(n)   => (*n as i64).to_variant(),
+        ProstValue::Message(sub)    => dynamic_msg_to_dict(sub).to_variant(),
+        ProstValue::List(items)     => {
             let mut arr: Array<Variant> = Array::new();
             for item in items {
                 let v = prost_value_to_variant(item);
@@ -274,11 +215,11 @@ fn prost_value_to_variant(value: &ProstValue) -> Variant {
             let mut sub_dict = Dictionary::new();
             for (k, v) in map {
                 let key_var: Variant = match k {
-                    MapKey::Bool(b) => b.to_variant(),
-                    MapKey::I32(n) => (*n as i64).to_variant(),
-                    MapKey::I64(n) => n.to_variant(),
-                    MapKey::U32(n) => (*n as i64).to_variant(),
-                    MapKey::U64(n) => (*n as i64).to_variant(),
+                    MapKey::Bool(b)   => b.to_variant(),
+                    MapKey::I32(n)    => (*n as i64).to_variant(),
+                    MapKey::I64(n)    => n.to_variant(),
+                    MapKey::U32(n)    => (*n as i64).to_variant(),
+                    MapKey::U64(n)    => (*n as i64).to_variant(),
                     MapKey::String(s) => GString::from(s.as_str()).to_variant(),
                 };
                 sub_dict.set(key_var, prost_value_to_variant(v));
@@ -297,7 +238,7 @@ fn dynamic_msg_to_dict(msg: &DynamicMessage) -> Dictionary {
     d
 }
 
-// ── Godot Dictionary → serde_json::Value helpers (used by send_generic) ──
+// ── Godot Dictionary → serde_json::Value (used by send_generic) ──────────────
 
 fn dict_to_json_value(d: &Dictionary) -> serde_json::Value {
     let mut map = serde_json::Map::new();
@@ -312,59 +253,27 @@ fn dict_to_json_value(d: &Dictionary) -> serde_json::Value {
 fn variant_to_json_value(v: &Variant) -> serde_json::Value {
     use godot::builtin::VariantType;
     match v.get_type() {
-        VariantType::NIL => serde_json::Value::Null,
-        VariantType::BOOL => match v.try_to::<bool>() {
-            Ok(b) => serde_json::Value::Bool(b),
-            Err(_) => serde_json::Value::Null,
-        },
-        VariantType::INT => match v.try_to::<i64>() {
-            Ok(i) => serde_json::json!(i),
-            Err(_) => serde_json::Value::Null,
-        },
-        VariantType::FLOAT => match v.try_to::<f64>() {
-            Ok(f) => serde_json::Number::from_f64(f)
-                .map(serde_json::Value::Number)
-                .unwrap_or(serde_json::Value::Null),
-            Err(_) => serde_json::Value::Null,
-        },
-        VariantType::STRING => match v.try_to::<GString>() {
-            Ok(s) => serde_json::Value::String(s.to_string()),
-            Err(_) => serde_json::Value::Null,
-        },
-        VariantType::DICTIONARY => match v.try_to::<Dictionary>() {
-            Ok(d) => dict_to_json_value(&d),
-            Err(_) => serde_json::Value::Null,
-        },
-        VariantType::ARRAY => match v.try_to::<Array<Variant>>() {
-            Ok(arr) => {
-                let json_arr: Vec<serde_json::Value> = arr
-                    .iter_shared()
+        VariantType::NIL  => serde_json::Value::Null,
+        VariantType::BOOL => v.try_to::<bool>().map(serde_json::Value::Bool).unwrap_or(serde_json::Value::Null),
+        VariantType::INT  => v.try_to::<i64>().map(|i| serde_json::json!(i)).unwrap_or(serde_json::Value::Null),
+        VariantType::FLOAT => v.try_to::<f64>()
+            .ok()
+            .and_then(|f| serde_json::Number::from_f64(f).map(serde_json::Value::Number))
+            .unwrap_or(serde_json::Value::Null),
+        VariantType::STRING => v.try_to::<GString>()
+            .map(|s| serde_json::Value::String(s.to_string()))
+            .unwrap_or(serde_json::Value::Null),
+        VariantType::DICTIONARY => v.try_to::<Dictionary>()
+            .map(|d| dict_to_json_value(&d))
+            .unwrap_or(serde_json::Value::Null),
+        VariantType::ARRAY => v.try_to::<Array<Variant>>()
+            .map(|arr| {
+                let items: Vec<serde_json::Value> = arr.iter_shared()
                     .map(|item| variant_to_json_value(&item))
                     .collect();
-                serde_json::Value::Array(json_arr)
-            }
-            Err(_) => serde_json::Value::Null,
-        },
+                serde_json::Value::Array(items)
+            })
+            .unwrap_or(serde_json::Value::Null),
         _ => serde_json::Value::Null,
     }
-}
-
-// ── Compiled channel helpers ──
-
-fn roles_to_array(roles: &[RoleInfo]) -> Array<Dictionary> {
-    let mut arr = Array::new();
-    for r in roles {
-        arr.push(&role_to_dict(r));
-    }
-    arr
-}
-
-fn role_to_dict(r: &RoleInfo) -> Dictionary {
-    let mut d = Dictionary::new();
-    d.set("id", r.id);
-    d.set("cid", r.cid);
-    d.set("lv", r.lv);
-    d.set("name", GString::from(r.name.as_str()));
-    d.set("icon", r.icon);
-    d
 }
