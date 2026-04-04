@@ -1,0 +1,876 @@
+{
+  "version": 1,
+  "proto_pkg": "pb",
+  "messages": [
+    {
+      "ekey_value": 1,
+      "ekey_name": "ReqLogin",
+      "message_name": "ReqLogin",
+      "message_full_name": "pb.ReqLogin",
+      "direction": "client_to_server",
+      "kind": "req",
+      "event_name": "req_login",
+      "field_schema": [
+        {
+          "number": 1,
+          "name": "fast",
+          "type_name": "bool",
+          "repeated": false
+        },
+        {
+          "number": 2,
+          "name": "magic",
+          "type_name": "sint64",
+          "repeated": false
+        },
+        {
+          "number": 3,
+          "name": "timestamp",
+          "type_name": "sint64",
+          "repeated": false
+        },
+        {
+          "number": 4,
+          "name": "s_id",
+          "type_name": "sint64",
+          "repeated": false
+        },
+        {
+          "number": 5,
+          "name": "role_id",
+          "type_name": "sint64",
+          "repeated": false
+        },
+        {
+          "number": 6,
+          "name": "account",
+          "type_name": "string",
+          "repeated": false
+        },
+        {
+          "number": 7,
+          "name": "username",
+          "type_name": "string",
+          "repeated": false
+        },
+        {
+          "number": 8,
+          "name": "channel_id",
+          "type_name": "string",
+          "repeated": false
+        },
+        {
+          "number": 9,
+          "name": "channel_uid",
+          "type_name": "string",
+          "repeated": false
+        },
+        {
+          "number": 10,
+          "name": "platform",
+          "type_name": "string",
+          "repeated": false
+        },
+        {
+          "number": 11,
+          "name": "appid",
+          "type_name": "string",
+          "repeated": false
+        },
+        {
+          "number": 12,
+          "name": "token",
+          "type_name": "string",
+          "repeated": false
+        },
+        {
+          "number": 13,
+          "name": "version",
+          "type_name": "string",
+          "repeated": false
+        },
+        {
+          "number": 14,
+          "name": "isadult",
+          "type_name": "bool",
+          "repeated": false
+        },
+        {
+          "number": 15,
+          "name": "iemi",
+          "type_name": "string",
+          "repeated": false
+        },
+        {
+          "number": 16,
+          "name": "mac",
+          "type_name": "string",
+          "repeated": false
+        },
+        {
+          "number": 17,
+          "name": "idfa",
+          "type_name": "string",
+          "repeated": false
+        },
+        {
+          "number": 18,
+          "name": "android",
+          "type_name": "string",
+          "repeated": false
+        },
+        {
+          "number": 19,
+          "name": "dvbrand",
+          "type_name": "string",
+          "repeated": false
+        },
+        {
+          "number": 20,
+          "name": "dvtype",
+          "type_name": "string",
+          "repeated": false
+        },
+        {
+          "number": 21,
+          "name": "ip",
+          "type_name": "string",
+          "repeated": false
+        }
+      ],
+      "fingerprint": "10:string;11:string;12:string;13:string;14:bool;15:string;16:string;17:string;18:string;19:string;1:bool;20:string;21:string;2:sint64;3:sint64;4:sint64;5:sint64;6:string;7:string;8:string;9:string",
+      "fingerprint_u64": 17104308906600550491,
+      "client_export": true,
+      "server_export": true,
+      "bridge_mode": "typed_with_hotfix_fallback",
+      "hotfix_fallback": false
+    },
+    {
+      "ekey_value": 2,
+      "ekey_name": "RspLogin",
+      "message_name": "RspLogin",
+      "message_full_name": "pb.RspLogin",
+      "direction": "server_to_client",
+      "kind": "rsp",
+      "event_name": "rsp_login",
+      "field_schema": [
+        {
+          "number": 1,
+          "name": "err",
+          "type_name": "e.T",
+          "repeated": false
+        },
+        {
+          "number": 2,
+          "name": "fast",
+          "type_name": "bool",
+          "repeated": false
+        },
+        {
+          "number": 3,
+          "name": "reboot_time",
+          "type_name": "sint64",
+          "repeated": false
+        },
+        {
+          "number": 4,
+          "name": "shutdown_time",
+          "type_name": "sint64",
+          "repeated": false
+        },
+        {
+          "number": 5,
+          "name": "devmod",
+          "type_name": "bool",
+          "repeated": false
+        },
+        {
+          "number": 6,
+          "name": "roles",
+          "type_name": "m.RoleSummaryData",
+          "repeated": true
+        },
+        {
+          "number": 7,
+          "name": "account",
+          "type_name": "string",
+          "repeated": false
+        },
+        {
+          "number": 8,
+          "name": "server_time",
+          "type_name": "sint64",
+          "repeated": false
+        }
+      ],
+      "fingerprint": "1:e.T;2:bool;3:sint64;4:sint64;5:bool;6:r:m:RoleSummaryData{1:sint64;2:sint64;3:sint64;4:string;5:sint64;6:sint64;7:sint64};7:string;8:sint64",
+      "fingerprint_u64": 8698179241726132664,
+      "client_export": true,
+      "server_export": true,
+      "bridge_mode": "typed_with_hotfix_fallback",
+      "hotfix_fallback": true
+    },
+    {
+      "ekey_value": 3,
+      "ekey_name": "ReqCreateRole",
+      "message_name": "ReqCreateRole",
+      "message_full_name": "pb.ReqCreateRole",
+      "direction": "client_to_server",
+      "kind": "req",
+      "event_name": "req_create_role",
+      "field_schema": [
+        {
+          "number": 1,
+          "name": "cid",
+          "type_name": "sint64",
+          "repeated": false
+        },
+        {
+          "number": 2,
+          "name": "name",
+          "type_name": "string",
+          "repeated": false
+        }
+      ],
+      "fingerprint": "1:sint64;2:string",
+      "fingerprint_u64": 10626031280309605954,
+      "client_export": true,
+      "server_export": true,
+      "bridge_mode": "typed_with_hotfix_fallback",
+      "hotfix_fallback": false
+    },
+    {
+      "ekey_value": 4,
+      "ekey_name": "RspCreateRole",
+      "message_name": "RspCreateRole",
+      "message_full_name": "pb.RspCreateRole",
+      "direction": "server_to_client",
+      "kind": "rsp",
+      "event_name": "rsp_create_role",
+      "field_schema": [
+        {
+          "number": 1,
+          "name": "err",
+          "type_name": "e.T",
+          "repeated": false
+        },
+        {
+          "number": 2,
+          "name": "role",
+          "type_name": "m.RoleSummaryData",
+          "repeated": false
+        }
+      ],
+      "fingerprint": "1:e.T;2:m:RoleSummaryData{1:sint64;2:sint64;3:sint64;4:string;5:sint64;6:sint64;7:sint64}",
+      "fingerprint_u64": 3730558282258583740,
+      "client_export": true,
+      "server_export": true,
+      "bridge_mode": "typed_with_hotfix_fallback",
+      "hotfix_fallback": true
+    },
+    {
+      "ekey_value": 5,
+      "ekey_name": "ReqLoginRole",
+      "message_name": "ReqLoginRole",
+      "message_full_name": "pb.ReqLoginRole",
+      "direction": "client_to_server",
+      "kind": "req",
+      "event_name": "req_login_role",
+      "field_schema": [
+        {
+          "number": 1,
+          "name": "role_id",
+          "type_name": "sint64",
+          "repeated": false
+        }
+      ],
+      "fingerprint": "1:sint64",
+      "fingerprint_u64": 13421433696915384606,
+      "client_export": true,
+      "server_export": true,
+      "bridge_mode": "typed_with_hotfix_fallback",
+      "hotfix_fallback": false
+    },
+    {
+      "ekey_value": 6,
+      "ekey_name": "RspLoginRole",
+      "message_name": "RspLoginRole",
+      "message_full_name": "pb.RspLoginRole",
+      "direction": "server_to_client",
+      "kind": "rsp",
+      "event_name": "rsp_login_role",
+      "field_schema": [
+        {
+          "number": 1,
+          "name": "err",
+          "type_name": "e.T",
+          "repeated": false
+        },
+        {
+          "number": 2,
+          "name": "data",
+          "type_name": "m.LoginData",
+          "repeated": false
+        }
+      ],
+      "fingerprint": "1:e.T;2:m:LoginData{1:bool;2:m:Time{1:sint64;2:sint64;3:sint64;4:sint64;5:sint64;6:sint64;7:sint64;8:sint64}}",
+      "fingerprint_u64": 5809175933385160183,
+      "client_export": true,
+      "server_export": true,
+      "bridge_mode": "typed_with_hotfix_fallback",
+      "hotfix_fallback": true
+    },
+    {
+      "ekey_value": 100,
+      "ekey_name": "ReqPing",
+      "message_name": "ReqPing",
+      "message_full_name": "pb.ReqPing",
+      "direction": "client_to_server",
+      "kind": "req",
+      "event_name": "req_ping",
+      "field_schema": null,
+      "fingerprint": "",
+      "fingerprint_u64": 14695981039346656037,
+      "client_export": true,
+      "server_export": true,
+      "bridge_mode": "typed_with_hotfix_fallback",
+      "hotfix_fallback": false
+    },
+    {
+      "ekey_value": 101,
+      "ekey_name": "RspPing",
+      "message_name": "RspPing",
+      "message_full_name": "pb.RspPing",
+      "direction": "server_to_client",
+      "kind": "rsp",
+      "event_name": "rsp_ping",
+      "field_schema": null,
+      "fingerprint": "",
+      "fingerprint_u64": 14695981039346656037,
+      "client_export": true,
+      "server_export": true,
+      "bridge_mode": "typed_with_hotfix_fallback",
+      "hotfix_fallback": true
+    },
+    {
+      "ekey_value": 102,
+      "ekey_name": "ReqPingZZZ",
+      "message_name": "ReqPingZZZ",
+      "message_full_name": "pb.ReqPingZZZ",
+      "direction": "client_to_server",
+      "kind": "req",
+      "event_name": "req_ping_zzz",
+      "field_schema": null,
+      "fingerprint": "",
+      "fingerprint_u64": 14695981039346656037,
+      "client_export": true,
+      "server_export": true,
+      "bridge_mode": "typed_with_hotfix_fallback",
+      "hotfix_fallback": false
+    },
+    {
+      "ekey_value": 103,
+      "ekey_name": "RspPingZZZ",
+      "message_name": "RspPingZZZ",
+      "message_full_name": "pb.RspPingZZZ",
+      "direction": "server_to_client",
+      "kind": "rsp",
+      "event_name": "rsp_ping_zzz",
+      "field_schema": null,
+      "fingerprint": "",
+      "fingerprint_u64": 14695981039346656037,
+      "client_export": true,
+      "server_export": true,
+      "bridge_mode": "typed_with_hotfix_fallback",
+      "hotfix_fallback": true
+    },
+    {
+      "ekey_value": 200,
+      "ekey_name": "ReqEnterZone",
+      "message_name": "ReqEnterZone",
+      "message_full_name": "pb.ReqEnterZone",
+      "direction": "client_to_server",
+      "kind": "req",
+      "event_name": "req_enter_zone",
+      "field_schema": null,
+      "fingerprint": "",
+      "fingerprint_u64": 14695981039346656037,
+      "client_export": true,
+      "server_export": true,
+      "bridge_mode": "typed_with_hotfix_fallback",
+      "hotfix_fallback": false
+    },
+    {
+      "ekey_value": 201,
+      "ekey_name": "RspEnterZone",
+      "message_name": "RspEnterZone",
+      "message_full_name": "pb.RspEnterZone",
+      "direction": "server_to_client",
+      "kind": "rsp",
+      "event_name": "rsp_enter_zone",
+      "field_schema": null,
+      "fingerprint": "",
+      "fingerprint_u64": 14695981039346656037,
+      "client_export": true,
+      "server_export": true,
+      "bridge_mode": "typed_with_hotfix_fallback",
+      "hotfix_fallback": true
+    },
+    {
+      "ekey_value": 300,
+      "ekey_name": "ReqMove",
+      "message_name": "ReqMove",
+      "message_full_name": "pb.ReqMove",
+      "direction": "client_to_server",
+      "kind": "req",
+      "event_name": "req_move",
+      "field_schema": [
+        {
+          "number": 1,
+          "name": "pos",
+          "type_name": "m.Vector",
+          "repeated": false
+        }
+      ],
+      "fingerprint": "1:m:Vector{1:int64;2:int64;3:int64}",
+      "fingerprint_u64": 15507277061675333991,
+      "client_export": true,
+      "server_export": true,
+      "bridge_mode": "typed_with_hotfix_fallback",
+      "hotfix_fallback": false
+    },
+    {
+      "ekey_value": 301,
+      "ekey_name": "RspMove",
+      "message_name": "RspMove",
+      "message_full_name": "pb.RspMove",
+      "direction": "server_to_client",
+      "kind": "rsp",
+      "event_name": "rsp_move",
+      "field_schema": [
+        {
+          "number": 1,
+          "name": "role_id",
+          "type_name": "int64",
+          "repeated": false
+        },
+        {
+          "number": 2,
+          "name": "pos",
+          "type_name": "m.Vector",
+          "repeated": false
+        }
+      ],
+      "fingerprint": "1:int64;2:m:Vector{1:int64;2:int64;3:int64}",
+      "fingerprint_u64": 10307230203263175223,
+      "client_export": true,
+      "server_export": true,
+      "bridge_mode": "typed_with_hotfix_fallback",
+      "hotfix_fallback": true
+    },
+    {
+      "ekey_value": 10000,
+      "ekey_name": "DspLogin",
+      "message_name": "DspLogin",
+      "message_full_name": "pb.DspLogin",
+      "direction": "server_to_client",
+      "kind": "dsp",
+      "event_name": "dsp_login",
+      "field_schema": [
+        {
+          "number": 1,
+          "name": "data",
+          "type_name": "m.LoginData",
+          "repeated": false
+        }
+      ],
+      "fingerprint": "1:m:LoginData{1:bool;2:m:Time{1:sint64;2:sint64;3:sint64;4:sint64;5:sint64;6:sint64;7:sint64;8:sint64}}",
+      "fingerprint_u64": 9879918198925938001,
+      "client_export": true,
+      "server_export": true,
+      "bridge_mode": "typed_with_hotfix_fallback",
+      "hotfix_fallback": true
+    },
+    {
+      "ekey_value": 10001,
+      "ekey_name": "DspSrvMaintain",
+      "message_name": "DspSrvMaintain",
+      "message_full_name": "pb.DspSrvMaintain",
+      "direction": "server_to_client",
+      "kind": "dsp",
+      "event_name": "dsp_srv_maintain",
+      "field_schema": [
+        {
+          "number": 1,
+          "name": "reboot_time",
+          "type_name": "sint64",
+          "repeated": false
+        },
+        {
+          "number": 2,
+          "name": "shutdown_time",
+          "type_name": "sint64",
+          "repeated": false
+        }
+      ],
+      "fingerprint": "1:sint64;2:sint64",
+      "fingerprint_u64": 1014567601490764631,
+      "client_export": true,
+      "server_export": true,
+      "bridge_mode": "typed_with_hotfix_fallback",
+      "hotfix_fallback": true
+    },
+    {
+      "ekey_value": 10002,
+      "ekey_name": "DspKickRole",
+      "message_name": "DspKickRole",
+      "message_full_name": "pb.DspKickRole",
+      "direction": "server_to_client",
+      "kind": "dsp",
+      "event_name": "dsp_kick_role",
+      "field_schema": [
+        {
+          "number": 1,
+          "name": "ty",
+          "type_name": "e.T",
+          "repeated": false
+        },
+        {
+          "number": 2,
+          "name": "sess_id",
+          "type_name": "sint64",
+          "repeated": false
+        }
+      ],
+      "fingerprint": "1:e.T;2:sint64",
+      "fingerprint_u64": 15632825699634096128,
+      "client_export": true,
+      "server_export": true,
+      "bridge_mode": "typed_with_hotfix_fallback",
+      "hotfix_fallback": true
+    },
+    {
+      "ekey_value": 10003,
+      "ekey_name": "DspEnterZone",
+      "message_name": "DspEnterZone",
+      "message_full_name": "pb.DspEnterZone",
+      "direction": "server_to_client",
+      "kind": "dsp",
+      "event_name": "dsp_enter_zone",
+      "field_schema": null,
+      "fingerprint": "",
+      "fingerprint_u64": 14695981039346656037,
+      "client_export": true,
+      "server_export": true,
+      "bridge_mode": "typed_with_hotfix_fallback",
+      "hotfix_fallback": true
+    },
+    {
+      "ekey_value": 33005,
+      "ekey_name": "DspMove",
+      "message_name": "DspMove",
+      "message_full_name": "pb.DspMove",
+      "direction": "server_to_client",
+      "kind": "dsp",
+      "event_name": "dsp_move",
+      "field_schema": [
+        {
+          "number": 1,
+          "name": "role_id",
+          "type_name": "int64",
+          "repeated": false
+        },
+        {
+          "number": 2,
+          "name": "pos",
+          "type_name": "m.Vector",
+          "repeated": false
+        }
+      ],
+      "fingerprint": "1:int64;2:m:Vector{1:int64;2:int64;3:int64}",
+      "fingerprint_u64": 10307230203263175223,
+      "client_export": true,
+      "server_export": true,
+      "bridge_mode": "typed_with_hotfix_fallback",
+      "hotfix_fallback": true
+    }
+  ],
+  "data_types": [
+    {
+      "message_name": "Attr",
+      "message_full_name": "pb.Attr",
+      "field_schema": [
+        {
+          "number": 1,
+          "name": "ty",
+          "type_name": "e.T",
+          "repeated": false
+        },
+        {
+          "number": 2,
+          "name": "val",
+          "type_name": "sint64",
+          "repeated": false
+        },
+        {
+          "number": 3,
+          "name": "rate",
+          "type_name": "sint64",
+          "repeated": false
+        }
+      ]
+    },
+    {
+      "message_name": "Award",
+      "message_full_name": "pb.Award",
+      "field_schema": [
+        {
+          "number": 1,
+          "name": "batch",
+          "type_name": "sint64",
+          "repeated": false
+        },
+        {
+          "number": 2,
+          "name": "bind",
+          "type_name": "sint64",
+          "repeated": false
+        },
+        {
+          "number": 3,
+          "name": "weight",
+          "type_name": "sint64",
+          "repeated": false
+        },
+        {
+          "number": 4,
+          "name": "job",
+          "type_name": "sint64",
+          "repeated": false
+        },
+        {
+          "number": 5,
+          "name": "object",
+          "type_name": "m.Object",
+          "repeated": false
+        },
+        {
+          "number": 6,
+          "name": "due",
+          "type_name": "sint64",
+          "repeated": false
+        }
+      ]
+    },
+    {
+      "message_name": "Item",
+      "message_full_name": "pb.Item",
+      "field_schema": [
+        {
+          "number": 1,
+          "name": "idx",
+          "type_name": "sint64",
+          "repeated": false
+        },
+        {
+          "number": 2,
+          "name": "id",
+          "type_name": "sint64",
+          "repeated": false
+        },
+        {
+          "number": 3,
+          "name": "cid",
+          "type_name": "sint64",
+          "repeated": false
+        },
+        {
+          "number": 4,
+          "name": "count",
+          "type_name": "sint64",
+          "repeated": false
+        },
+        {
+          "number": 5,
+          "name": "bind",
+          "type_name": "sint64",
+          "repeated": false
+        },
+        {
+          "number": 6,
+          "name": "due",
+          "type_name": "sint64",
+          "repeated": false
+        }
+      ]
+    },
+    {
+      "message_name": "LoginData",
+      "message_full_name": "pb.LoginData",
+      "field_schema": [
+        {
+          "number": 1,
+          "name": "regain",
+          "type_name": "bool",
+          "repeated": false
+        },
+        {
+          "number": 2,
+          "name": "time",
+          "type_name": "m.Time",
+          "repeated": false
+        }
+      ]
+    },
+    {
+      "message_name": "Object",
+      "message_full_name": "pb.Object",
+      "field_schema": [
+        {
+          "number": 1,
+          "name": "objType",
+          "type_name": "e.T",
+          "repeated": false
+        },
+        {
+          "number": 2,
+          "name": "subType",
+          "type_name": "sint64",
+          "repeated": false
+        },
+        {
+          "number": 3,
+          "name": "count",
+          "type_name": "sint64",
+          "repeated": false
+        }
+      ]
+    },
+    {
+      "message_name": "RoleSummaryData",
+      "message_full_name": "pb.RoleSummaryData",
+      "field_schema": [
+        {
+          "number": 1,
+          "name": "id",
+          "type_name": "sint64",
+          "repeated": false
+        },
+        {
+          "number": 2,
+          "name": "cid",
+          "type_name": "sint64",
+          "repeated": false
+        },
+        {
+          "number": 3,
+          "name": "lv",
+          "type_name": "sint64",
+          "repeated": false
+        },
+        {
+          "number": 4,
+          "name": "name",
+          "type_name": "string",
+          "repeated": false
+        },
+        {
+          "number": 5,
+          "name": "icon",
+          "type_name": "sint64",
+          "repeated": false
+        },
+        {
+          "number": 6,
+          "name": "young_ts",
+          "type_name": "sint64",
+          "repeated": false
+        },
+        {
+          "number": 7,
+          "name": "create_ts",
+          "type_name": "sint64",
+          "repeated": false
+        }
+      ]
+    },
+    {
+      "message_name": "Time",
+      "message_full_name": "pb.Time",
+      "field_schema": [
+        {
+          "number": 1,
+          "name": "dsec",
+          "type_name": "sint64",
+          "repeated": false
+        },
+        {
+          "number": 2,
+          "name": "wsec",
+          "type_name": "sint64",
+          "repeated": false
+        },
+        {
+          "number": 3,
+          "name": "wday",
+          "type_name": "sint64",
+          "repeated": false
+        },
+        {
+          "number": 4,
+          "name": "sec",
+          "type_name": "sint64",
+          "repeated": false
+        },
+        {
+          "number": 5,
+          "name": "young",
+          "type_name": "sint64",
+          "repeated": false
+        },
+        {
+          "number": 6,
+          "name": "login_time",
+          "type_name": "sint64",
+          "repeated": false
+        },
+        {
+          "number": 7,
+          "name": "open_day",
+          "type_name": "sint64",
+          "repeated": false
+        },
+        {
+          "number": 8,
+          "name": "merge_day",
+          "type_name": "sint64",
+          "repeated": false
+        }
+      ]
+    },
+    {
+      "message_name": "Vector",
+      "message_full_name": "pb.Vector",
+      "field_schema": [
+        {
+          "number": 1,
+          "name": "x",
+          "type_name": "int64",
+          "repeated": false
+        },
+        {
+          "number": 2,
+          "name": "y",
+          "type_name": "int64",
+          "repeated": false
+        },
+        {
+          "number": 3,
+          "name": "z",
+          "type_name": "int64",
+          "repeated": false
+        }
+      ]
+    }
+  ]
+}

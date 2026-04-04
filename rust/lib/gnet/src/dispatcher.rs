@@ -1,17 +1,13 @@
 use crate::codec::PacketCodec;
 use crate::event::NetEvent;
-use crate::protocol_registry::ProtocolRegistry;
 use crate::typed_protocol::{self, EKey};
 
-/// Dispatch a raw wire packet to a `NetEvent`.
+/// Decode a raw wire packet into a `NetEvent`.
 ///
 /// Priority:
-///   1. Override check: if runtime descriptor fingerprint differs from compiled one,
-///      route to the hotfix/fallback channel (DynamicMessage).
-///   2. Compiled channel: decode via strongly-typed `typed_protocol::decode_server_message`.
-///   3. Generic channel: dynamic decode via ProtocolRegistry (for keys not in EKey).
-///   4. Raw fallback: return the bytes as-is.
-pub fn dispatch(raw: &[u8], registry: &mut ProtocolRegistry) -> NetEvent {
+///   1. Compiled channel: strongly-typed decode via `typed_protocol`.
+///   2. Raw fallback: unknown key or decode failure.
+pub fn dispatch(raw: &[u8]) -> NetEvent {
     let (key_u16, err_u16, body) = match PacketCodec::decode(raw) {
         Ok(v) => v,
         Err(e) => {
@@ -23,37 +19,8 @@ pub fn dispatch(raw: &[u8], registry: &mut ProtocolRegistry) -> NetEvent {
         }
     };
 
-    // ── 1. Hotfix override: runtime descriptor is newer than compiled struct ──
-    if registry.should_override(key_u16) {
-        if let Some(meta) = registry.get(key_u16).cloned() {
-            if err_u16 != 0 {
-                return NetEvent::RawMessage { key: key_u16, err: err_u16, body: vec![] };
-            }
-            match registry.decode_generic(&meta.message, body) {
-                Ok(dynamic_msg) => {
-                    return NetEvent::HotfixEvent {
-                        event_name: meta.event_name,
-                        key: key_u16,
-                        err: err_u16,
-                        fields: dynamic_msg,
-                    };
-                }
-                Err(_) => {}
-            }
-        }
-    }
-
-    // ── 2. Compiled channel: typed decode ──
     if let Some(key) = EKey::from_u16(key_u16) {
         if err_u16 != 0 {
-            // Error packet for a known key: produce ProtocolEvent with err set.
-            // We need a dummy ServerMessage or just return RawMessage for non-server keys.
-            if typed_protocol::decode_server_message(key, &[]).is_ok() {
-                // Key has a server decoder – produce a degenerate ProtocolEvent.
-                // Since body is empty on error packets the decode would give defaults.
-                // Better: just return RawMessage with metadata for error handling in GDScript.
-                return NetEvent::RawMessage { key: key_u16, err: err_u16, body: vec![] };
-            }
             return NetEvent::RawMessage { key: key_u16, err: err_u16, body: vec![] };
         }
         if let Ok(msg) = typed_protocol::decode_server_message(key, body) {
@@ -67,25 +34,6 @@ pub fn dispatch(raw: &[u8], registry: &mut ProtocolRegistry) -> NetEvent {
         }
     }
 
-    // ── 3. Generic channel: dynamic decode via registry ──
-    if let Some(meta) = registry.get(key_u16).cloned() {
-        if err_u16 != 0 {
-            return NetEvent::RawMessage { key: key_u16, err: err_u16, body: vec![] };
-        }
-        match registry.decode_generic(&meta.message, body) {
-            Ok(dynamic_msg) => {
-                return NetEvent::HotfixEvent {
-                    event_name: meta.event_name,
-                    key: key_u16,
-                    err: err_u16,
-                    fields: dynamic_msg,
-                };
-            }
-            Err(_) => {}
-        }
-    }
-
-    // ── 4. Raw fallback ──
     NetEvent::RawMessage {
         key: key_u16,
         err: err_u16,

@@ -12,7 +12,6 @@ pub mod event;
 pub mod session;
 pub mod transport;
 pub mod dispatcher;
-pub mod protocol_registry;
 pub mod client;
 
 pub use typed_protocol::{
@@ -20,7 +19,6 @@ pub use typed_protocol::{
 };
 pub use codec::PacketCodec;
 pub use event::NetEvent;
-pub use protocol_registry::ProtocolRegistry;
 pub use client::NetClient;
 
 pub fn init_logging() {

@@ -1,32 +1,25 @@
-## 协议处理器示例模板
+## 协议处理器模板（本文件无 _on_*，不会被注册）
 ##
-## 用法：
-##   1. 复制此文件为 handler_xxx.gd（如 handler_shop.gd）
-##   2. 在其中定义 _on_<event_type>(event: Dictionary) 方法
-##   3. NetManager 启动时自动扫描并注册
-##   4. 热更时随 PCK 包下发，调用 net_manager._load_handlers() 重新扫描
+## 步骤：
+##   1. 复制为 handler_你的模块.gd
+##   2. extends NetHandlerBase，实现 _on_<event_name>(event: NetEventGd)
+##   3. 无需再改 net_manager.gd
 ##
-## 命名规则：
-##   event type "rsp_shop_list"  →  方法名 "_on_rsp_shop_list"
-##   event type "dsp_world_msg"  →  方法名 "_on_dsp_world_msg"
+## event_name 与 genpb manifest 一致（snake_case），如 rsp_shop_list、dsp_world_msg。
 ##
-## 注意：此文件仅作示例，不会被注册（没有 _on_ 方法）
+## 强类型业务（函数名仍为 _on_<event_name>，由 NetManager 按首参类型自动传参）：
+##   仅编译通道：
+##     func _on_rsp_shop_list(msg: RspShopListGd) -> void:
+##         _use(msg.items)
+##   需要热更 / get_data() 可能为空时，加第二参：
+##     func _on_rsp_shop_list(msg: RspShopListGd, event: NetEventGd) -> void:
+##         if msg:
+##             _use(msg.items)
+##         else:
+##             var hf := event.get_hotfix_fields()
+##             ...
+##
+## 通用字段读取：NetEventUtils.field(event, "err", 0)、NetEventUtils.msg_err(event)
+## 发协议：bridge() 或 net_manager().get_bridge() 上调用 send_xxx / send_generic
 
-extends RefCounted
-
-## 可选：由 NetManager 在加载时自动调用，让处理器持有管理器引用
-var _manager: Node = null
-
-func bind_manager(m: Node) -> void:
-	_manager = m
-
-# 示例：处理商店列表响应（event type = "rsp_shop_list"）
-# func _on_rsp_shop_list(event: Dictionary) -> void:
-# 	var items: Array = event.get("items", [])
-# 	print("[Shop] received %d items" % items.size())
-# 	# 如需发送消息，通过 _manager._bridge.send_xxx(...)
-
-# 示例：处理广播消息（event type = "dsp_world_msg"）
-# func _on_dsp_world_msg(event: Dictionary) -> void:
-# 	var msg: String = event.get("content", "")
-# 	print("[World] broadcast: ", msg)
+extends NetHandlerBase
