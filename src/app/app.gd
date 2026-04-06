@@ -4,7 +4,7 @@ var config_manager: Node
 var net_manager: Node
 
 func _ready():
-	var ConfigManagerScript = preload("res://src/core/config/config_manager.gd")
+	var ConfigManagerScript = preload("res://src/game/config/config_manager.gd")
 	config_manager = ConfigManagerScript.new()
 	config_manager.name = "ConfigManager"
 	add_child(config_manager)
@@ -14,7 +14,7 @@ func _ready():
 	net_manager.name = "NetManager"
 	add_child(net_manager)
 
-	var main_menu = preload("res://src/ui/menu/main_menu.tscn").instantiate()
+	var main_menu = preload("res://src/game/ui/menu/main_menu.tscn").instantiate()
 	add_child(main_menu)
 
 	print("[App] Application started (Rust client)")
