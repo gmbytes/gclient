@@ -4,11 +4,6 @@ use gnet::event::NetEvent;
 use gnet::session::ConnectionState;
 use gnet::NetClient;
 
-use crate::godot_bridge_gen::{
-    make_framework_event, make_framework_event_with_extra, server_message_to_event, NetEventGd,
-    make_event,
-};
-
 #[derive(GodotClass)]
 #[class(base = Node)]
 pub struct NetClientBridge {
@@ -29,6 +24,18 @@ impl INode for NetClientBridge {
 
 #[godot_api]
 impl NetClientBridge {
+    #[signal]
+    fn net_connected();
+
+    #[signal]
+    fn net_disconnected(reason: GString);
+
+    #[signal]
+    fn net_message(key: i64, body: PackedByteArray);
+
+    #[signal]
+    fn net_error(key: i64, err_code: i64);
+
     #[func]
     fn connect_to_server(&mut self, host: GString, port: i64, path: GString) {
         self.client
@@ -47,16 +54,6 @@ impl NetClientBridge {
     }
 
     #[func]
-    fn start_heartbeat(&mut self, interval_secs: f64) {
-        self.client.start_heartbeat(interval_secs);
-    }
-
-    #[func]
-    fn stop_heartbeat(&mut self) {
-        self.client.stop_heartbeat();
-    }
-
-    #[func]
     fn get_connection_state(&self) -> GString {
         match self.client.connection_state() {
             ConnectionState::Disconnected => "disconnected".into(),
@@ -66,99 +63,49 @@ impl NetClientBridge {
     }
 
     #[func]
-    fn poll_events(&mut self) -> Array<Gd<NetEventGd>> {
-        let raw_events = self.client.poll_events();
-        let mut arr: Array<Gd<NetEventGd>> = Array::new();
-        for event in raw_events {
-            arr.push(&net_event_to_godot(event));
-        }
-        arr
-    }
-
-    // ── Generated send_* (TODO: genpb should generate these) ──────────────
-
-    #[func]
-    fn send_login(&mut self, account: GString, token: GString, version: GString) {
-        use prost::Message;
-        let body = gnet::pb::ReqLogin {
-            account: account.to_string(),
-            token: token.to_string(),
-            version: version.to_string(),
-            ..Default::default()
-        }.encode_to_vec();
-        self.client.send_packet(gnet::EKey::ReqLogin.as_u16(), &body);
+    fn is_connected(&self) -> bool {
+        self.client.connection_state() == ConnectionState::Connected
     }
 
     #[func]
-    fn send_create_role(&mut self, cid: i64, name: GString) {
-        use prost::Message;
-        let body = gnet::pb::ReqCreateRole {
-            cid, name: name.to_string(),
-        }.encode_to_vec();
-        self.client.send_packet(gnet::EKey::ReqCreateRole.as_u16(), &body);
+    fn send_raw(&mut self, data: PackedByteArray) {
+        self.client.send_raw(data.to_vec());
     }
 
+    /// Called every frame from GDScript _process.
+    /// Polls transport events and emits typed signals instead of returning Dictionary.
     #[func]
-    fn send_login_role(&mut self, role_id: i64) {
-        use prost::Message;
-        let body = gnet::pb::ReqLoginRole { role_id }.encode_to_vec();
-        self.client.send_packet(gnet::EKey::ReqLoginRole.as_u16(), &body);
-    }
-
-    #[func]
-    fn send_ping(&mut self) {
-        use prost::Message;
-        let body = gnet::pb::ReqPing {}.encode_to_vec();
-        self.client.send_packet(gnet::EKey::ReqPing.as_u16(), &body);
-    }
-
-    #[func]
-    fn send_enter_zone(&mut self) {
-        use prost::Message;
-        let body = gnet::pb::ReqEnterZone {}.encode_to_vec();
-        self.client.send_packet(gnet::EKey::ReqEnterZone.as_u16(), &body);
-    }
-
-    #[func]
-    fn send_move(&mut self, x: i64, y: i64, z: i64) {
-        use prost::Message;
-        let body = gnet::pb::ReqMove {
-            pos: Some(gnet::pb::Vector { x, y, z }),
-        }.encode_to_vec();
-        self.client.send_packet(gnet::EKey::ReqMove.as_u16(), &body);
-    }
-}
-
-// ── NetEvent -> Gd<NetEventGd> ──────────────────────────────────────────────
-
-fn net_event_to_godot(event: NetEvent) -> Gd<NetEventGd> {
-    match event {
-        NetEvent::Connected => make_framework_event("connected"),
-
-        NetEvent::Disconnected { reason } => {
-            let mut extra = Dictionary::new();
-            extra.set("reason", GString::from(reason));
-            make_framework_event_with_extra("disconnected", extra)
-        }
-
-        NetEvent::ConnectError { message } => {
-            let mut extra = Dictionary::new();
-            extra.set("message", GString::from(message));
-            make_framework_event_with_extra("error", extra)
-        }
-
-        NetEvent::ProtocolEvent { key, err, msg, .. } => {
-            server_message_to_event(key, err, &msg)
-        }
-
-        NetEvent::RawMessage { key, err, body } => {
-            let mut extra = Dictionary::new();
-            extra.set("key", key as i64);
-            extra.set("err", err as i64);
-            let mut byte_arr = PackedByteArray::new();
-            for b in body { byte_arr.push(b); }
-            extra.set("body", byte_arr);
-            make_event("raw", key, err, None, extra)
+    fn process_network(&mut self) {
+        let events = self.client.poll_events();
+        for event in events {
+            match event {
+                NetEvent::Connected => {
+                    self.base_mut()
+                        .emit_signal("net_connected", &[]);
+                }
+                NetEvent::Disconnected { reason } => {
+                    self.base_mut()
+                        .emit_signal("net_disconnected", &[
+                            GString::from(reason).to_variant(),
+                        ]);
+                }
+                NetEvent::Message { key, body } => {
+                    let mut byte_arr = PackedByteArray::new();
+                    byte_arr.extend(body);
+                    self.base_mut()
+                        .emit_signal("net_message", &[
+                            (key as i64).to_variant(),
+                            byte_arr.to_variant(),
+                        ]);
+                }
+                NetEvent::Error { key, err_code } => {
+                    self.base_mut()
+                        .emit_signal("net_error", &[
+                            (key as i64).to_variant(),
+                            (err_code as i64).to_variant(),
+                        ]);
+                }
+            }
         }
     }
 }

@@ -2,11 +2,8 @@ use std::time::{Duration, Instant};
 
 use log::{debug, info, warn};
 
-use crate::typed_protocol::{self, ClientMessage};
 use crate::codec::PacketCodec;
-use crate::dispatcher;
 use crate::event::NetEvent;
-use crate::pb;
 use crate::session::{ConnectionState, Session};
 use crate::transport::{RawNetEvent, WsTransport};
 
@@ -14,9 +11,6 @@ pub struct NetClient {
     transport: Option<WsTransport>,
     session: Session,
     pending_packets: Vec<Vec<u8>>,
-    heartbeat_active: bool,
-    heartbeat_interval: Duration,
-    last_heartbeat: Instant,
     // reconnect state
     last_url: String,
     reconnect_enabled: bool,
@@ -32,9 +26,6 @@ impl NetClient {
             transport: None,
             session: Session::new(),
             pending_packets: Vec::new(),
-            heartbeat_active: false,
-            heartbeat_interval: Duration::from_secs(5),
-            last_heartbeat: Instant::now(),
             last_url: String::new(),
             reconnect_enabled: false,
             reconnect_interval: Duration::from_secs(3),
@@ -59,7 +50,6 @@ impl NetClient {
     }
 
     pub fn disconnect(&mut self) {
-        self.stop_heartbeat();
         self.reconnect_enabled = false;
         if let Some(ref mut t) = self.transport {
             t.close();
@@ -80,64 +70,28 @@ impl NetClient {
         self.session.state
     }
 
-    // ── Typed send (used by generated bridge code) ──
-
-    pub fn send_message(&mut self, msg: &ClientMessage) {
-        let (key, body) = typed_protocol::encode_client_message(msg);
-        self.send_packet(key.as_u16(), &body);
-    }
-
-    /// Low-level send: encode into a wire packet and queue or send immediately.
-    pub fn send_packet(&mut self, key: u16, body: &[u8]) {
-        let packet = PacketCodec::encode(key, body);
-
+    /// Send a raw pre-encoded frame (GDScript handles framing via cmd_ext.gd).
+    pub fn send_raw(&mut self, data: Vec<u8>) {
         if self.session.state == ConnectionState::Disconnected
             || self.session.state == ConnectionState::Connecting
         {
-            debug!("[net] queued packet key={} ({} bytes)", key, packet.len());
-            self.pending_packets.push(packet);
+            debug!("[net] queued raw packet ({} bytes)", data.len());
+            self.pending_packets.push(data);
             return;
         }
 
         if let Some(ref transport) = self.transport {
-            if !transport.send(packet.clone()) {
-                self.pending_packets.push(packet);
+            if !transport.send(data.clone()) {
+                self.pending_packets.push(data);
             }
         } else {
-            self.pending_packets.push(packet);
+            self.pending_packets.push(data);
         }
     }
 
-    // ── Heartbeat ──
-
-    pub fn start_heartbeat(&mut self, interval_secs: f64) {
-        self.heartbeat_interval =
-            Duration::from_secs_f64(interval_secs.max(1.0));
-        self.heartbeat_active = true;
-        self.last_heartbeat = Instant::now();
-        info!("[net] heartbeat started interval={:.1}s", interval_secs);
-    }
-
-    pub fn stop_heartbeat(&mut self) {
-        if self.heartbeat_active {
-            self.heartbeat_active = false;
-            debug!("[net] heartbeat stopped");
-        }
-    }
-
-    // ── Core poll loop (called from GDScript _process) ──
-
+    /// Poll network events. Called from GDScript _process every frame.
     pub fn poll_events(&mut self) -> Vec<NetEvent> {
         let mut events = Vec::new();
-
-        // Auto-heartbeat (fires when connected)
-        if self.heartbeat_active
-            && self.session.state == ConnectionState::Connected
-            && self.last_heartbeat.elapsed() >= self.heartbeat_interval
-        {
-            self.send_message(&ClientMessage::ReqPing(pb::ReqPing {}));
-            self.last_heartbeat = Instant::now();
-        }
 
         // Auto-reconnect
         if self.reconnect_enabled
@@ -177,7 +131,6 @@ impl NetClient {
                 }
                 RawNetEvent::Disconnected(reason) => {
                     self.session.on_disconnected();
-                    self.stop_heartbeat();
                     self.transport = None;
                     self.last_disconnect = Some(Instant::now());
                     info!("[net] disconnected: {}", reason);
@@ -185,23 +138,30 @@ impl NetClient {
                 }
                 RawNetEvent::Error(message) => {
                     self.session.on_disconnected();
-                    self.stop_heartbeat();
                     self.transport = None;
                     self.last_disconnect = Some(Instant::now());
                     warn!("[net] error: {}", message);
-                    events.push(NetEvent::ConnectError { message });
+                    events.push(NetEvent::Disconnected { reason: message });
                 }
                 RawNetEvent::Message(data) => {
-                    let event = dispatcher::dispatch(&data);
-                    events.push(event);
+                    match PacketCodec::decode(&data) {
+                        Ok((key, err, body)) => {
+                            if err != 0 {
+                                events.push(NetEvent::Error { key, err_code: err });
+                            } else {
+                                events.push(NetEvent::Message { key, body: body.to_vec() });
+                            }
+                        }
+                        Err(e) => {
+                            warn!("[net] codec decode error: {}", e);
+                        }
+                    }
                 }
             }
         }
 
         events
     }
-
-    // ── Internals ──
 
     fn flush_pending(&mut self) {
         if self.pending_packets.is_empty() {

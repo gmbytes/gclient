@@ -10,6 +10,5 @@ crate-type = ["cdylib"]
 godot = "0.2.4"
 gnet = { path = "../lib/gnet" }
 gxlsx = { path = "../lib/gxlsx" }
-prost = "0.14"
 serde_json = "1"
 log = "0.4"

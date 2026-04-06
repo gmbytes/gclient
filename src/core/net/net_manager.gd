@@ -1,14 +1,24 @@
 extends Node
 
-const _HANDLER_MODE_ARGS0 := 0
-const _HANDLER_MODE_NET_EVENT := 1
-const _HANDLER_MODE_TYPED_PAYLOAD := 2
-const _HANDLER_MODE_TYPED_AND_EVENT := 3
+const CmdExt = preload("res://src/game/pb/cmd_ext.gd")
+const Cmd    = preload("res://src/game/pb/cmd.gd")
+const CmdReq = preload("res://src/game/pb/cmd_req.gd")
 
 var _bridge: Node
+var _cmd_ext: RefCounted
 
-# method_name -> { "handler": Object, "mode": int }
+# method_name -> { "handler": Object }
 var _handlers: Dictionary = {}
+
+var _heartbeat_active: bool = false
+var _heartbeat_interval: float = 5.0
+var _heartbeat_elapsed: float = 0.0
+
+## Filled by UI before connect; session handler reads this for ReqLogin.
+var account_to_login: String = "test_user"
+
+## Emitted when server returns a 4-byte error packet; UI connects to show toast.
+signal server_error(key: int, key_name: String, err_code: int)
 
 func _ready():
 	var ext_path = "res://addons/gdbridge/gdbridge.gdextension"
@@ -22,14 +32,25 @@ func _ready():
 		return
 	_bridge.name = "Bridge"
 	add_child(_bridge)
+
+	_bridge.net_connected.connect(_on_net_connected)
+	_bridge.net_disconnected.connect(_on_net_disconnected)
+	_bridge.net_message.connect(_on_net_message)
+	_bridge.net_error.connect(_on_net_error)
+
+	_cmd_ext = CmdExt.new()
 	_load_handlers()
 
-func _process(_delta):
+
+func _process(delta):
 	if _bridge == null:
 		return
-	var events = _bridge.poll_events()
-	for event: NetEventGd in events:
-		_handle_event(event)
+	if _heartbeat_active:
+		_heartbeat_elapsed += delta
+		if _heartbeat_elapsed >= _heartbeat_interval:
+			_heartbeat_elapsed = 0.0
+			_send_heartbeat()
+	_bridge.process_network()
 
 # ── Public API ──
 
@@ -38,13 +59,50 @@ func connect_to_server(host: String = "127.0.0.1", port: int = 8080):
 		return
 	_bridge.connect_to_server(host, port, "/ws")
 
+
 func disconnect_from_server():
 	if _bridge == null:
 		return
+	stop_heartbeat()
 	_bridge.disconnect_from_server()
+
 
 func get_bridge() -> Node:
 	return _bridge
+
+
+func get_status_text() -> String:
+	if _bridge == null:
+		return "offline (no bridge)"
+	var st: String = str(_bridge.get_connection_state())
+	match st:
+		"disconnected":
+			return "Disconnected"
+		"connecting":
+			return "Connecting…"
+		"connected":
+			return "Connected"
+	return st
+
+
+func send_msg(key: int, msg) -> void:
+	if _bridge == null:
+		return
+	var data: PackedByteArray = CmdExt.marshal_request(key, msg)
+	_bridge.send_raw(data)
+
+
+func start_heartbeat(interval: float = 5.0) -> void:
+	_heartbeat_interval = maxf(interval, 1.0)
+	_heartbeat_active = true
+	_heartbeat_elapsed = 0.0
+	print("[Net] Heartbeat started interval=%.1fs" % _heartbeat_interval)
+
+
+func stop_heartbeat() -> void:
+	if _heartbeat_active:
+		_heartbeat_active = false
+		print("[Net] Heartbeat stopped")
 
 # ── Handler loading ──
 
@@ -79,73 +137,43 @@ func _load_handlers():
 			if _handlers.has(mname):
 				push_warning("[Net] skip duplicate handler %s from %s" % [mname, f])
 				continue
-			var mode: int = _infer_handler_dispatch_mode(method_info)
-			_handlers[mname] = {"handler": handler, "mode": mode}
+			_handlers[mname] = {"handler": handler}
+
+# ── Signal callbacks ──
+
+func _on_net_connected() -> void:
+	_dispatch("_on_connected")
 
 
-func _infer_handler_dispatch_mode(method_info: Dictionary) -> int:
-	var args: Array = method_info.get("args", [])
-	var n: int = args.size()
-	if n == 0:
-		return _HANDLER_MODE_ARGS0
-	var c0: String = _arg_hint_class(args[0])
-	if n >= 2:
-		var c1: String = _arg_hint_class(args[1])
-		if _is_typed_payload_class(c0) and c1 == "NetEventGd":
-			return _HANDLER_MODE_TYPED_AND_EVENT
-	if c0 == "" or c0 == "NetEventGd":
-		return _HANDLER_MODE_NET_EVENT
-	if _is_typed_payload_class(c0):
-		return _HANDLER_MODE_TYPED_PAYLOAD
-	return _HANDLER_MODE_NET_EVENT
+func _on_net_disconnected(reason: String) -> void:
+	print("[Net] Disconnected: %s" % reason)
+	_dispatch("_on_disconnected")
 
 
-func _is_typed_payload_class(class_name_str: String) -> bool:
-	if class_name_str.is_empty() or class_name_str == "NetEventGd":
-		return false
-	return true
-
-
-func _arg_hint_class(arg: Variant) -> String:
-	if typeof(arg) != TYPE_DICTIONARY:
-		return ""
-	var d: Dictionary = arg
-	if d.has("class_name"):
-		var cn = d["class_name"]
-		if cn != null and str(cn) != "":
-			return str(cn)
-	return ""
-
-# ── Central dispatch ──
-
-func _handle_event(event: NetEventGd) -> void:
-	var ename: String = str(event.event_name)
-	if ename.is_empty():
+func _on_net_message(key: int, body: PackedByteArray) -> void:
+	var msg = _cmd_ext.unmarshal(key, body)
+	var kname: String = _cmd_ext.key_name(key)
+	if kname.is_empty():
+		print("[Net] Unknown key: %d" % key)
 		return
-	var method_name: String = "_on_" + ename
-	if _handlers.has(method_name):
-		_invoke_registered_handler(method_name, event)
-	else:
-		_on_unknown_event(event)
+	_dispatch("_on_" + kname, msg)
 
 
-func _invoke_registered_handler(method_name: String, event: NetEventGd) -> void:
-	var rec: Dictionary = _handlers[method_name]
-	var handler: Object = rec["handler"]
-	var mode: int = int(rec["mode"])
-	var data: Variant = event.get_data()
-	match mode:
-		_HANDLER_MODE_ARGS0:
-			handler.call(method_name)
-		_HANDLER_MODE_NET_EVENT:
-			handler.call(method_name, event)
-		_HANDLER_MODE_TYPED_PAYLOAD:
-			handler.call(method_name, data)
-		_HANDLER_MODE_TYPED_AND_EVENT:
-			handler.call(method_name, data, event)
-		_:
-			handler.call(method_name, event)
+func _on_net_error(key: int, err_code: int) -> void:
+	var kname: String = _cmd_ext.key_name(key)
+	if kname.is_empty():
+		kname = str(key)
+	print("[Net] Server error: %s err_code=%d" % [kname, err_code])
+	server_error.emit(key, kname, err_code)
 
 
-func _on_unknown_event(event: NetEventGd) -> void:
-	print("[Net] Unhandled event: ", str(event.event_name))
+func _dispatch(method_name: String, msg: Variant = null) -> void:
+	if not _handlers.has(method_name):
+		return
+	var handler: Object = _handlers[method_name]["handler"]
+	handler.call(method_name, msg)
+
+
+func _send_heartbeat() -> void:
+	var ping = CmdReq.ReqPing.new()
+	send_msg(Cmd.EKey.T.ReqPing, ping)

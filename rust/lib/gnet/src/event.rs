@@ -1,22 +1,9 @@
-/// All network events produced by the dispatch pipeline.
 #[derive(Clone, Debug)]
 pub enum NetEvent {
     Connected,
     Disconnected { reason: String },
-    ConnectError { message: String },
-
-    /// Primary channel: a compiled, strongly-typed server message.
-    ProtocolEvent {
-        event_name: String,
-        key: u16,
-        err: u16,
-        msg: Box<crate::typed_protocol::ServerMessage>,
-    },
-
-    /// Unknown key or decode failure.
-    RawMessage {
-        key: u16,
-        err: u16,
-        body: Vec<u8>,
-    },
+    /// Success packet: key + raw protobuf body bytes (no deserialization).
+    Message { key: u16, body: Vec<u8> },
+    /// Error packet: key + err_code (no body).
+    Error { key: u16, err_code: u16 },
 }

@@ -2,8 +2,8 @@
 
 `gclient` 是 Godot **4.7** 客户端工程（`project.godot` 中应用名为 `slgame-rust`），采用 **GDScript + Rust GDExtension**：
 
-- **GDScript**：场景与业务脚本（`src/app`、`src/core`、`src/ui`）
-- **`rust/`**：workspace（`lib/gnet` 网络、`lib/gxlsx` 配置、`gdbridge` 桥接 cdylib）
+- **GDScript**：场景与业务脚本（`src/app`、`src/core`、`src/ui`）；**协议编解码、分发、心跳**在 GDScript（`cmd_ext.gd` + godobuf 生成的 `src/game/pb/*.gd`）。
+- **`rust/`**：workspace（`lib/gnet` 传输层、`lib/gxlsx` 配置、`gdbridge` 桥接 cdylib）
 - **`addons/gdbridge/`**：GDExtension 描述文件；编译产物在 `addons/gdbridge/bin/`（已 `.gitignore`）
 - **`data/`**：表配置导出目录（Windows 下 `build.bat` 会调用 `genxls` 写入 `data/config/` 等）
 - **`assets/`**：音频、纹理、字体等资源
@@ -19,33 +19,33 @@ gclient/
 ├── build.sh                   # Unix：cargo + 复制 .so/.dylib
 ├── icon.svg
 ├── src/
-│   ├── app/                   # app.tscn / app.gd（组装 ConfigManager、NetManager、主菜单）
+│   ├── game/
+│   │   └── pb/                # genpb --gd_out：godobuf *.gd + cmd_ext.gd
+│   ├── app/                   # app.tscn / app.gd
 │   ├── core/
 │   │   ├── config/            # config_manager.gd
 │   │   └── net/
-│   │       ├── net_manager.gd # 轮询 poll_events + 按 event_name 路由到 handler
+│   │       ├── net_manager.gd # poll_events(Dictionary) + cmd_ext 反序列化 + 路由 + 心跳
 │   │       ├── net_handler_base.gd
 │   │       ├── net_event_utils.gd
 │   │       └── handlers/
-│   │           ├── handler_framework.gd  # 框架事件：connected/disconnected/error/raw
-│   │           ├── handler_session.gd    # 会话流程：登录/创角/进角色/心跳
+│   │           ├── handler_framework.gd  # disconnected 等
+│   │           ├── handler_session.gd    # 登录/创角/进角色/业务消息
 │   │           └── handler_example.gd    # 模板说明
-│   └── ui/menu/               # main_menu 场景与脚本
-├── data/                      # 配置导出目标（见构建说明）
-├── assets/                    # 可选资源目录
+│   └── ui/menu/
+├── data/
+├── assets/
 ├── addons/gdbridge/
-│   └── gdbridge.gdextension   # 指向 bin/ 下动态库
+│   └── gdbridge.gdextension
 └── rust/
     ├── Cargo.toml             # workspace: gnet, gxlsx, gdbridge
-    ├── .gdignore
-    ├── scripts/build.ps1      # 仅构建 gdbridge 并复制到 addons/gdbridge/bin/
+    ├── scripts/build.ps1
     ├── lib/
-    │   ├── gnet/              # WebSocket 传输、编解码、dispatcher、事件产出
-    │   │   ├── src/gen/       # genpb 生成：pb.rs、typed_protocol.rs
-    │   │   └── tests/         # codec_parity、dispatch_channels
-    │   └── gxlsx/             # manifest、按表加载；config.gen.rs 由 genxls 生成
+    │   ├── gnet/              # WebSocket、PacketCodec（帧边界）、Session、重连
+    │   │   └── tests/         # codec_parity 等
+    │   └── gxlsx/
     └── gdbridge/
-        └── src/gen/           # genpb 生成 godot_bridge_gen.rs
+        └── net_bridge.rs      # NetClientBridge：connect / send_raw / poll_events → Dictionary
 ```
 
 ## 网络架构
@@ -53,44 +53,55 @@ gclient/
 ### 数据流
 
 ```
-proto 定义 → genpb 生成 → gnet (WebSocket + codec + dispatch)
-                           → gdbridge (NetEvent → NetEventGd)
-                             → NetManager (poll + route)
-                               → handlers/*.gd (业务消费)
+proto → genpb (--go_out + --gd_out)
+         ├── Go 服务端 *.pb.go / cmd.ext.go
+         └── gclient: godobuf *.gd + cmd_ext.gd
+
+运行时:
+  handlers / NetManager (GDScript)
+       │ send_msg → CmdExt.marshal_request → send_raw
+       ▼
+  gdbridge: WebSocket 发二进制帧
+       ▼
+  gnet: 收帧 → PacketCodec::decode → NetEvent { Message|Error|... }
+       ▼
+  NetManager: unmarshal(key, body) → _on_<snake_case>
 ```
 
-协议链路为 **单向流动**，各层职责清晰：
+各层职责：
 
 | 层 | 位置 | 职责 | 不做什么 |
 |----|------|------|----------|
-| `genpb` | `comm/tools/genpb` | 生成 `pb.rs`、`typed_protocol.rs`、`godot_bridge_gen.rs` | — |
-| `gnet` | `rust/lib/gnet/` | WebSocket 传输、PacketCodec 编解码、dispatcher 把 bytes 转 `NetEvent`、心跳、自动重连 | 不含游戏业务逻辑、不写 per-message send 方法 |
-| `gdbridge` | `rust/gdbridge/` | 暴露 Godot API；`NetEvent` → `NetEventGd`；`send_*` 方法 | 不做业务判断 |
-| `NetManager` | `src/core/net/net_manager.gd` | 轮询 `poll_events()`、按 `_on_<event_name>` 路由到 handler | 不含业务状态、不处理事件内容 |
-| `handlers/*.gd` | `src/core/net/handlers/` | 唯一业务消费层 | — |
+| **genpb** | `comm/tools/genpb` | Go：`*.pb.go`、`cmd.ext.go`、`data.pb.vector.go`；可选 GD：`*.gd`、`cmd_ext.gd` | 不生成 Rust protobuf |
+| **gnet** | `rust/lib/gnet/` | WebSocket、`PacketCodec`（拆出 key/err/body）、连接三态、待发队列、自动重连 | 不反序列化 protobuf、不心跳 |
+| **gdbridge** | `rust/gdbridge/` | `NetClientBridge`：`connect_to_server`、`send_raw`、`poll_events` → `Array[Dictionary]`、`set_reconnect` | 不解析业务消息 |
+| **cmd_ext.gd** | `src/game/pb/` | `unmarshal` / `marshal_request` / `key_name` | — |
+| **NetManager** | `net_manager.gd` | 轮询、心跳定时发 `ReqPing`、`send_msg`、按 key 路由 `_on_*` | 具体业务在 handler |
+| **handlers** | `handlers/*.gd` | 消费 godobuf 消息类型（`get_err()` 等） | — |
 
-### NetEvent（Rust 侧，5 个变体）
+### NetEvent（Rust `gnet`，传输层）
 
 ```rust
 pub enum NetEvent {
     Connected,
     Disconnected { reason: String },
-    ConnectError { message: String },
-    ProtocolEvent { event_name: String, key: u16, err: u16, msg: Box<ServerMessage> },
-    RawMessage { key: u16, err: u16, body: Vec<u8> },
+    Message { key: u16, body: Vec<u8> },   // err==0 的成功下行，body 为纯 protobuf
+    Error { key: u16, err_code: u16 },     // 4 字节错误帧
 }
 ```
 
-### NetEventGd（Godot 侧）
+连接失败、握手失败等仍通过 **`Disconnected { reason }`** 上报（与原先 `ConnectError` 合并为同一类事件在 Godot 侧统一按 `disconnected` 处理）。
 
-| 成员 / 方法 | 含义 |
-|-------------|------|
-| `event_name` | snake_case，如 `rsp_login`、`connected`、`dsp_move` |
-| `key` / `err` | 线协议上的 EKey 与错误码 |
-| `get_data()` | 强类型下行消息：`Gd<RspLoginGd>` 等；框架事件为空 |
-| `get_extra()` | 框架事件附带信息的 `Dictionary`（如 `reason`、`message`） |
+### `poll_events()` 返回的 `Dictionary`
 
-### Session 状态（仅传输层三态）
+| `type` | 字段 | 含义 |
+|--------|------|------|
+| `connected` | — | WebSocket 已连通 |
+| `disconnected` | `reason: String` | 断线或连接失败原因 |
+| `message` | `key: int`, `body: PackedByteArray` | 成功下行，待 `cmd_ext.unmarshal` |
+| `error` | `key: int`, `err_code: int` | 服务端错误帧，无 body |
+
+### Session 状态（传输层三态）
 
 ```rust
 pub enum ConnectionState {
@@ -100,88 +111,52 @@ pub enum ConnectionState {
 }
 ```
 
-游戏级状态（"登录中"、"已进入游戏"等）由 GDScript handler 自行维护。
+### 二进制帧格式
 
-### 分发优先级（dispatcher）
+与 `comm/doc/消息设计.md`、`gnet` 中 `codec.rs` 一致：
 
-```
-WebSocket Raw Bytes
-    │
-    ▼
-PacketCodec::decode → (key, err, body)
-    │
-    ├─► EKey::from_u16 命中 且 decode_server_message 成功
-    │       → NetEvent::ProtocolEvent { event_name, msg: ServerMessage }
-    │
-    └─► 未命中或解码失败
-            → NetEvent::RawMessage { key, err, body }
-```
+- 上行：`[2B key][4B len][body]`（GDScript 用 `CmdExt.marshal_request`）
+- 下行成功：`[2B key][2B err=0][4B len][body]`
+- 下行错误：`[2B key][2B err!=0]`
 
-新增下行消息后 **dispatcher 无需修改**——`EKey` 和 `decode_server_message` 来自 genpb 生成的 `typed_protocol.rs`。
-
-### NetClientBridge API（GDScript 可调用）
+### NetClientBridge API（GDScript）
 
 | 类别 | 方法 |
 |------|------|
 | 连接 | `connect_to_server(host, port, path)`、`disconnect_from_server()` |
 | 重连 | `set_reconnect(enabled, interval_secs, max_retries)` |
-| 心跳 | `start_heartbeat(interval_secs)`、`stop_heartbeat()` |
-| 状态 | `get_connection_state()` → `"disconnected"` / `"connecting"` / `"connected"` |
-| 轮询 | `poll_events()` → `Array[NetEventGd]` |
-| 发送 | `send_login(account, token, version)`、`send_create_role(cid, name)`、`send_login_role(role_id)`、`send_ping()`、`send_enter_zone()`、`send_move(x, y, z)` |
+| 状态 | `get_connection_state()`、`is_connected()` |
+| 轮询 | `poll_events()` → `Array[Dictionary]` |
+| 发送 | `send_raw(PackedByteArray)` — 完整一帧（通常由 `NetManager.send_msg` 封装） |
 
-发送方法未来由 genpb 自动生成到 `net_bridge.rs`；`client.rs` 只保留底层 `send_packet(key, body)` 和 `send_message(msg: &ClientMessage)`。
+### NetManager 与 Handler 约定
 
-### Handler 参数模式
+- 路由方法名：**`_on_` + `cmd_ext.key_name(key)`**（由 genpb 生成的 snake_case，如 `rsp_login`、`dsp_move`）。
+- 框架：`_on_connected(ev)`、`_on_disconnected(ev)`；业务：`_on_rsp_login(msg, ev)` 等（首参为 godobuf 消息对象或省略）。
+- **心跳**：`NetManager.start_heartbeat` / `stop_heartbeat`，定时 `ReqPing`；业务可在 `_on_rsp_ping` 中更新 RTT 等。
 
-| 模式 | 条件 | 调用方式 |
-|------|------|----------|
-| 无参 | 方法无参数 | `handler._on_xxx()` |
-| 完整事件 | 首参为 `NetEventGd` | `handler._on_xxx(event)` |
-| 强类型负载 | 首参为某 `*Gd` 类型 | `handler._on_xxx(event.get_data())` |
-| 强类型 + 事件 | 首参 `*Gd`、第二参 `NetEventGd` | `handler._on_xxx(data, event)` |
-
-### 框架级事件名
-
-| event_name | 含义 | `get_extra()` 字段 |
-|------------|------|--------------------|
-| `connected` | 连接成功 | — |
-| `disconnected` | 断线 | `reason: String` |
-| `error` | 连接失败 | `message: String` |
-| `raw` | 未知 key 或解码失败 | `key`, `err`, `body: PackedByteArray` |
-
-由 `handler_framework.gd` 处理。
+新增下行消息时：**改 proto → 运行 genpb（含 `--gd_out`）→ 在 handler 增加 `_on_<name>`**；**无需**改 Rust 分发表。
 
 ## 协议生成（genpb）
 
-`comm/tools/genpb` 是唯一协议生成入口：
+在仓库 **`comm/`** 下运行 **`genpb.bat`**，或在 **`comm/tools/genpb`** 下使用 **`gen.bat`** / `go run`，需同时更新客户端时带上 **`--gd_out`**，例如：
 
 ```bash
-cd comm/tools/genpb
-go run -buildvcs=false . --lang rust --flag client \
-  --rust_out  ../../gclient/rust/lib/gnet/src/gen \
-  --godot_out ../../gclient/rust/gdbridge/src/gen
+go run -buildvcs=false . --flag client \
+  --go_out ../../../server/server/internal/pb \
+  --gd_out ../../../gclient/src/game/pb \
+  --tools_dir ../proto
 ```
 
-| 输出路径 | 文件 | 作用 |
-|----------|------|------|
-| `--rust_out` | `pb.rs` | prost 消息类型 |
-| `--rust_out` | `typed_protocol.rs` | `EKey`、`ClientMessage` / `ServerMessage`、`encode_client_message` / `decode_server_message` |
-| `--godot_out` | `godot_bridge_gen.rs` | 下行消息 `*Gd` GodotClass、`NetEventGd`、`server_message_to_event` |
+`gen.bat` 默认已将 **`gd_out`** 指向本工程的 **`src/game/pb`**。
 
-### 扩展新协议的流程
+客户端 **不再** 使用 `pb.rs`、`typed_protocol.rs`、`godot_bridge_gen.rs`；协议类以 **`src/game/pb/*.gd`** 为准。
 
-1. 在 `comm/tools/genpb/proto/` 中修改 `.proto`，添加新消息与 EKey
-2. 运行 genpb，生成 `pb.rs`、`typed_protocol.rs`、`godot_bridge_gen.rs`
-3. 重编 Rust workspace（`cargo build`）
-4. 在 `handlers/` 中实现 `_on_<event_name>` 方法
+### 扩展新协议
 
-**零手改验收标准**：
-- 新增下行消息：跑 genpb → 写 handler → 完毕。Rust 手写代码零修改。
-- 新增上行消息：跑 genpb → GDScript 调用生成的 `send_*` → 完毕。Rust 手写代码零修改。
-- `dispatcher.rs` 不需要改。
-- `net_bridge.rs` 手写部分不需要改。
-- `net_manager.gd` 不需要改。
+1. 编辑 `comm/tools/genpb/proto/` 下 `.proto` 与 `EKey`。
+2. 运行 genpb（Go + `--gd_out`）。
+3. 在 `handlers/` 中实现 `_on_<snake_name>`；上行在业务里 `send_msg(Cmd.EKey.T.ReqXxx, req)`。
 
 ## 配置表（genxls）
 
@@ -195,11 +170,10 @@ Windows 下 **`build.bat`** 会在存在 `../comm/tools/genxls/genxls.exe` 与 `
 ## 关键约定
 
 - `gdbridge` 是唯一 cdylib；新 Rust 能力放在 `rust/lib/`，在 `gdbridge/src/` 增加桥接。
-- `comm/tools/genpb/proto/*.proto` 为协议真源；客户端 Rust/Godot 由 genpb 统一生成。
-- `gnet` 不含游戏业务逻辑（Session 只有连接三态）。
-- `net_bridge.rs` 手写部分只包含连接/断开/轮询/心跳/重连/状态查询（约 80 行），`send_*` 方法来自生成。
-- `NetManager` 不含业务状态和业务处理函数，只做轮询 + 路由。
-- `rust/.gdignore` 减轻 Godot 对 Rust 构建树的扫描。
+- `comm/tools/genpb/proto/*.proto` 为协议真源；服务端 Go 与客户端 GDScript 均由 genpb（含可选 `--gd_out`）生成。
+- `gnet` 只做传输与帧边界，**不含** protobuf 与游戏业务。
+- `NetManager` 不做具体业务逻辑，只做轮询、编解码调度与心跳定时器。
+- 更细的网络说明见仓库 **`docs/gclient-network.md`**（若与本文不一致，以代码与 **`comm/doc/消息设计.md`** 为准）。
 
 ## 构建
 
@@ -219,8 +193,6 @@ cd rust
 ./scripts/build.ps1 -Profile release  # release
 ```
 
-只构建 `gdbridge` crate 并复制产物到 `addons/gdbridge/bin/`。
-
 ## 运行与验证
 
 打开 `gclient/project.godot`，或使用命令行：
@@ -235,6 +207,6 @@ cd rust
 
 ```powershell
 cd rust
-cargo test -p gnet          # gnet 单元 + 集成测试
+cargo test -p gnet          # gnet 单元测试（含 codec）
 cargo test --workspace       # 全 workspace
 ```

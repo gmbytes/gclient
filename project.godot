@@ -10,10 +10,14 @@ config_version=5
 
 [application]
 
-config/name="slgame-rust"
+config/name="slgame"
 run/main_scene="res://src/app/app.tscn"
 config/features=PackedStringArray("4.7", "Mobile")
 config/icon="res://icon.svg"
+
+[dotnet]
+
+project/assembly_name="slgame"
 
 [extensions]
 

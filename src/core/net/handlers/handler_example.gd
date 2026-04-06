@@ -2,24 +2,27 @@
 ##
 ## 步骤：
 ##   1. 复制为 handler_你的模块.gd
-##   2. extends NetHandlerBase，实现 _on_<event_name>(event: NetEventGd)
+##   2. extends NetHandlerBase，实现 _on_<key_name>(msg: CmdRsp.RspXxx)
 ##   3. 无需再改 net_manager.gd
 ##
-## event_name 与 genpb manifest 一致（snake_case），如 rsp_shop_list、dsp_world_msg。
+## key_name 与 cmd_ext.gd 中 key_name() 一致（snake_case），
+## 如 rsp_login、dsp_move、rsp_enter_zone。
 ##
-## 强类型业务（函数名仍为 _on_<event_name>，由 NetManager 按首参类型自动传参）：
-##   仅编译通道：
-##     func _on_rsp_shop_list(msg: RspShopListGd) -> void:
-##         _use(msg.items)
-##   需要热更 / get_data() 可能为空时，加第二参：
-##     func _on_rsp_shop_list(msg: RspShopListGd, event: NetEventGd) -> void:
-##         if msg:
-##             _use(msg.items)
-##         else:
-##             var hf := event.get_hotfix_fields()
-##             ...
+## 所有 handler 统一签名（只有 msg，不含 err_code）：
 ##
-## 通用字段读取：NetEventUtils.field(event, "err", 0)、NetEventUtils.msg_err(event)
-## 发协议：bridge() 或 net_manager().get_bridge() 上调用 send_xxx / send_generic
+##   func _on_rsp_login(msg: CmdRsp.RspLogin) -> void:
+##       # msg: protobuf 消息对象，若为 null 表示解析失败
+##       if not msg:
+##           return
+##       # 使用 msg.get_xxx() ...
+##
+## 服务端 4 字节错误包不会分发到 handler，
+## 由 net_manager 统一通过 server_error 信号通知 UI 层处理。
+##
+## 连接/断开事件（msg 为 null）：
+##   func _on_connected(_msg) -> void: ...
+##   func _on_disconnected(_msg) -> void: ...
+##
+## 发协议：send_msg(Cmd.EKey.T.ReqXxx, req)
 
 extends NetHandlerBase
