@@ -1,11 +1,12 @@
 # gclient
 
-`gclient` 是 Godot **4.7** 客户端工程（`project.godot` 中应用名为 `slgame-rust`），采用 **GDScript + Rust GDExtension**：
+`gclient` 是 Godot **4.7** 客户端工程（`project.godot` 中应用名为 **`slgame`**），采用 **GDScript + Rust GDExtension**：
 
 - **GDScript**：场景与业务脚本（`src/app`、`src/core`、`src/ui`）；**协议编解码、分发、心跳**在 GDScript（`cmd_ext.gd` + godobuf 生成的 `src/game/pb/*.gd`）。
 - **`rust/`**：workspace（`lib/gnet` 传输层、`lib/gxlsx` 配置、`gdbridge` 桥接 cdylib）
 - **`addons/gdbridge/`**：GDExtension 描述文件；编译产物在 `addons/gdbridge/bin/`（已 `.gitignore`）
-- **`data/`**：表配置导出目录（Windows 下 `build.bat` 会调用 `genxls` 写入 `data/config/` 等）
+- **`data/config/`**：运行时读取的 **`all.json`**（由 **`comm/gen_client.bat`** 或本目录 **`build.bat`** 从 Excel 导出）
+- **`data/generated/`**：导表生成的 **`.res`**、`tables/*.res` 及中间 **`gd/`** 脚本
 - **`assets/`**：音频、纹理、字体等资源
 
 与 `comm/`（`genpb`、`genxls`、Excel 等）位于同一上级目录 `game/` 下时，下文相对路径以该布局为准。
@@ -137,18 +138,22 @@ pub enum ConnectionState {
 
 新增下行消息时：**改 proto → 运行 genpb（含 `--gd_out`）→ 在 handler 增加 `_on_<name>`**；**无需**改 Rust 分发表。
 
-## 协议生成（genpb）
+## 协议生成（推荐入口）
 
-在仓库 **`comm/`** 下运行 **`genpb.bat`**，或在 **`comm/tools/genpb`** 下使用 **`gen.bat`** / `go run`，需同时更新客户端时带上 **`--gd_out`**，例如：
+**推荐**：在仓库 **`comm/`** 运行 **`gen_client.bat`** —— 使用 **`gclient`** 内 **godobuf**（`addons/godobuf`）生成 **`src/game/pb/*.gd`**，再调用 **`genpb -gd_cmd_ext_only`** 写入 **`cmd_ext.gd`**。需本机 **`godot`** 在 PATH，或放置 **`comm/tools/protoc-gen-gd.exe`**。
+
+**备选**：在 **`comm/tools/genpb`** 执行 **`gen.bat`** / `go run`，同时传 **`--go_out`** 与 **`--gd_out`**，由 **genpb** 内置流程一次生成 Go + GD（依赖 **`comm/tools/protoc-gen-gd.exe`**）。例如：
 
 ```bash
 go run -buildvcs=false . --flag client \
   --go_out ../../../server/server/internal/pb \
   --gd_out ../../../gclient/src/game/pb \
-  --tools_dir ../proto
+  --tools_dir ..
 ```
 
-`gen.bat` 默认已将 **`gd_out`** 指向本工程的 **`src/game/pb`**。
+`gen.bat` 默认 **`gd_out`** 已指向本工程 **`src/game/pb`**。
+
+仅更新 **服务端 Go** 时，使用 **`comm/gen_server.bat`**，无需跑客户端 godobuf。
 
 客户端 **不再** 使用 `pb.rs`、`typed_protocol.rs`、`godot_bridge_gen.rs`；协议类以 **`src/game/pb/*.gd`** 为准。
 
@@ -160,12 +165,14 @@ go run -buildvcs=false . --flag client \
 
 ## 配置表（genxls）
 
-Windows 下 **`build.bat`** 会在存在 `../comm/tools/genxls/genxls.exe` 与 `../comm/excel` 时：
+有两种常见方式，与 **`comm/`** 约定一致：
 
-1. 导出到 `data/config/`（`manifest.json`、`tables/`、`--split-json` 等）
-2. 将 `data/config/config.gen.rs` 复制到 `rust/lib/gxlsx/src/config.gen.rs`
+1. **`comm/gen_client.bat`**：`--split-json` 导出到 **`comm/client_gen/`**，生成 **`gclient/data/generated/gd/c_*.gd`** 与 **`res_importer.gd`**，复制 **`all.json`** 到 **`data/config/`**，再用 Godot 无头导入 **`data/generated/*.res`**。适合与协议生成一条命令跑完。
+2. **本目录 `build.bat`**：若存在 **`../comm/tools/genxls.exe`**（由 **`comm/build.bat`** 产出）与 **`../comm/excel`**，则 **`genxls`** 直接 **`--out data/config`**、**`--gd-out data/generated/gd`**，并传 **`--gclient`** 触发无头导入 **`.res`**（见脚本内注释）。
 
-若未先构建 genxls 或无 Excel 目录，脚本跳过该步继续编译 Rust。Linux/macOS 的 `build.sh` 不调用 genxls。
+若未构建 genxls 或无 Excel 目录，**`build.bat`** 会跳过导表继续编译 Rust。Linux/macOS 的 **`build.sh`** 不调用 genxls。
+
+> 服务端表结构 Go 代码由 **`comm/gen_server.bat`** 写入 **`server/data/xls/go.gen.go`**，与客户端导出相互独立。
 
 ## 关键约定
 
